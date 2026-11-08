@@ -1,0 +1,28 @@
+name: model-kombat
+version: 0.1.0
+description: "Model Kombat — pit two Hermes models against each other on the same task set and score the fight deterministically (execute code, check formats, exact-match facts). Choose your fighter."
+author: DarkeTech
+kind: standalone
+requires_hermes: ">=0.21"
+capabilities:
+  - llm.model_override
+provides_tools:
+  - kombat_list_tasks
+  - kombat_run_fight
+  - kombat_score_answers
+config_schema:
+  fighter_a:
+    type: str
+    default: "stealth/crouton-alpha"
+    label: "Fighter A (model ID)"
+    description: "First model ID to fight, e.g. stealth/crouton-alpha"
+  fighter_b:
+    type: str
+    default: "deepseek/deepseek-v4.1-flash-1017"
+    label: "Fighter B (model ID)"
+    description: "Second model ID to fight, e.g. deepseek/deepseek-v4.1-flash-1017"
+  allow_code_execution:
+    type: bool
+    default: false
+    label: "Allow executing model-written code"
+    description: "Code tasks (e.g. T6) are only executed when this is on. Off = scored as skipped, never run."

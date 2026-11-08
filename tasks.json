@@ -1,0 +1,41 @@
+[
+  {
+    "id": "T1",
+    "title": "Multi-step reasoning (money)",
+    "scorer": "money",
+    "prompt": "A small shop sells notebooks in packs of 6 for $4.50 per pack, and pens in packs of 10 for $3.20 per pack. Maya buys 7 packs of notebooks and 4 packs of pens. She pays with a $50 bill.\na) How much does she spend in total?\nb) How much change does she get?\nc) If the shop then gives refunds on 2 notebook packs and 1 pen pack, how much is refunded?\nShow your working. Give the final answers as: a) $..., b) $..., c) $...",
+    "expected": ["$44.30", "$5.70", "$12.20"]
+  },
+  {
+    "id": "T2",
+    "title": "Debugging: second-largest distinct value",
+    "scorer": "debug",
+    "prompt": "The following Python function is supposed to return the second-largest *distinct* value in a list, or None if there isn't one. Find the bug(s) and give a corrected version.\n\n```python\ndef second_largest(xs):\n    if len(xs) < 2:\n        return None\n    xs_sorted = sorted(xs)\n    return xs_sorted[-2]\n```\n\nExplain in 2-3 sentences what fails, then give the corrected code."
+  },
+  {
+    "id": "T3",
+    "title": "Long-context recall",
+    "scorer": "recall",
+    "prompt": "Read the passage and answer only from it.\n\n---\nHelios Station logs, Q3:\n- The supply shuttle arrived on Sol 41 carrying 12 crates of medical supplies.\n- Engineer Priya Nair signed the manifest at 09:14.\n- The water recycler in Bay 3 was serviced on Sol 43 by technician Tomas Beck; the filter was replaced and flow returned to 98%.\n- On Sol 47, commander Elena Ruiz ordered a full inventory sweep after a discrepancy in the oxygen ledger.\n- The oxygen ledger discrepancy traced to a mislabelled tank: Tank R-7, which actually contains nitrogen, had been recorded as oxygen. It was relabelled on Sol 48.\n- A minor fire in the galley on Sol 52 was extinguished with no injuries; one smoke sensor was damaged.\n- No other incidents were recorded in Q3.\n---\n\nAnswer: (1) On which Sol did the water recycler get serviced, and by whom? (2) What was wrong with Tank R-7? (3) Were there any injuries in Q3?",
+    "expected": ["sol 43", "tomas beck", "nitrogen", "no injuries"]
+  },
+  {
+    "id": "T4",
+    "title": "Instruction following (exact format)",
+    "scorer": "format25",
+    "prompt": "Write a product description for a reusable water bottle. Constraints:\n- Exactly 3 sentences\n- Exactly 25 words total\n- The first word must be \"Stay\"\n- Do not use the words: amazing, best, incredible, perfect\n- End with a period"
+  },
+  {
+    "id": "T5",
+    "title": "Summarization fidelity",
+    "scorer": "summary50",
+    "prompt": "Summarize the passage in at most 50 words. Preserve all numbers, dates, and names exactly; do not add facts.\n\n---\nOn 14 March, the city council voted 7-3 to approve the Riverwalk project. The project, led by contractor Hartwell Builders, will cost $2.4 million over 18 months and includes 1.2 km of new path. Mayor Lucia Chen said construction begins in June. Opponents, including Councillor Raj Patel, argued the cost was too high and that consultation was inadequate. The council said a public consultation will be held in April.\n---",
+    "expected": ["14 March", "7-3", "Hartwell Builders", "$2.4 million", "18 months", "1.2 km", "Lucia Chen", "June", "Raj Patel", "April"]
+  },
+  {
+    "id": "T6",
+    "title": "Coding: leap year (executed)",
+    "scorer": "code_exec",
+    "prompt": "Write a Python function `is_leap_year(year: int) -> bool` that returns True if `year` is a leap year under the Gregorian calendar, False otherwise. Requirements:\n- Year must be an int; raise TypeError if not (note: bool is a subclass of int — treat bool as invalid? State your choice).\n- Must handle years <= 0 by raising ValueError.\n- Provide just the function (plus a one-line docstring), no extra explanation."
+  }
+]
