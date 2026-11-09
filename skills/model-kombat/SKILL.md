@@ -22,6 +22,21 @@ exact checks, not by vibes.
    get identical prompts (temperature 0, budgeted, one retry, usage tracked).
    The fight also drives the **model-kombat kanban board** (default on) — mention
    the board to the user as the live scoreboard.
+   - **Long cards (>6 tasks, or answers that can take minutes): always call with
+     `background: true`.** It returns `{job_id, status: "started"}` immediately
+     (like `/kombat fight`), so the host's ~420s tool timeout can't kill it. Then
+     poll `kombat_history {"running": true}` until `running` is false and score
+     with `kombat_score_answers {"last": true}`.
+   - Each LLM call has a hard deadline (`llm_timeout_s`, default 180s) enforced in
+     a worker thread: a hung response is abandoned and counted as an errored
+     attempt (retried once), never as a failure of the model.
+   - A whole-fight wall-clock cap (`max_fight_seconds`, default 360s) marks the
+     remaining pairs `skipped` ("fight time cap") and returns a partial result
+     with `time_cap_hit: true`; scoring excludes them and flags the round `*`.
+   - Results also carry `interrupted`, `stale_closed`, `bout_reused`. If a fight
+     is interrupted (KeyboardInterrupt/SystemExit/exception/budget stop), its
+     kanban cards are closed once with "Interrupted — not scored" and live.json
+     goes to status `error` with the reason — never leave cards stuck `ready`.
    - If the host refuses the model override, do NOT work around it: tell the
      user to set `plugins.entries.model-kombat.llm.allow_model_override: true`
      in config.yaml and retry. The plugin never touches credentials itself.

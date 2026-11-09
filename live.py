@@ -79,6 +79,7 @@ def _idle_live() -> dict:
         "winner": None,
         "ko": False,
         "edge": None,
+        "error": None,
         "points": {"a": 0, "b": 0},
         "usage": {
             "a": {"cost_usd": 0, "tokens": 0, "latency_s": 0},
@@ -160,6 +161,7 @@ class LiveState:
         self.winner = None
         self.ko = False
         self.edge = None
+        self.error = None
         self.points = {"a": 0.0, "b": 0.0}
         self.usage = {
             "a": {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0},
@@ -371,6 +373,7 @@ class LiveState:
             "winner": self.winner,
             "ko": bool(self.ko),
             "edge": self.edge,
+            "error": self.error,
             "points": dict(self.points),
             "usage": {
                 "a": dict(self.usage["a"]),
@@ -546,6 +549,8 @@ class LiveState:
     @_guard
     def fail(self, detail=None) -> dict:
         self.status = "error"
+        if detail is not None:
+            self.error = str(detail)[:500]
         self._touch()
         return self.snapshot()
 

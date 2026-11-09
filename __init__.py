@@ -9,7 +9,6 @@ Slash command: /kombat (fights run in the background; check /kombat status).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -19,7 +18,7 @@ from . import kanban, schemas, tools
 
 logger = logging.getLogger(__name__)
 
-_JOB: dict = {"running": False, "kind": None, "result": None, "error": None}
+_JOB: dict = tools.JOB  # shared with tools.start_job / kombat_history({"running": true})
 
 
 def _agentic_handler(args: dict, **kwargs) -> str:
@@ -31,30 +30,16 @@ def _agentic_handler(args: dict, **kwargs) -> str:
 
 
 def _start_job(ctx, kind: str, fn, fn_args: dict) -> str:
-    if _JOB["running"]:
-        return "A fight is already running. Check /kombat status."
-    _JOB.update(running=True, kind=kind, result=None, error=None)
-
-    async def _runner():
-        try:
-            _JOB["result"] = await asyncio.to_thread(fn, fn_args)
-        except Exception as exc:  # surfaced via /kombat status, never crashes the host
-            _JOB["error"] = str(exc)
-        finally:
-            _JOB["running"] = False
-
-    try:
-        ctx.spawn_task(_runner(), name=f"model-kombat:{kind}")
-    except Exception:
-        # No running loop (e.g. plain CLI): fall back to a sync run.
-        try:
-            _JOB["result"] = fn(fn_args)
-        except Exception as exc:
-            _JOB["error"] = str(exc)
-        _JOB["running"] = False
-        return f"Fight finished synchronously (background unavailable): {_JOB['result'] or _JOB['error']}"
+    job = tools.start_job(ctx, kind, fn, fn_args)
+    if not job.get("started"):
+        if job.get("status") == "busy":
+            return (
+                "A fight is already running. Check /kombat status or "
+                "kombat_history {\"running\": true}."
+            )
+        return f"Could not start the fight: {job.get('error') or job.get('status')}"
     return (
-        f"🥊 {kind.capitalize()} fight started in the background. "
+        f"🥊 {kind.capitalize()} fight started in the background (job {job.get('job_id')}). "
         "Watch the model-kombat kanban board, then /kombat status / /kombat score."
     )
 
@@ -205,7 +190,10 @@ def _handle_kombat(ctx, raw_args: str) -> str:
 
     if sub == "status":
         if _JOB["running"]:
-            return f"Fight ({_JOB['kind']}) is running… check the model-kombat kanban board."
+            return (
+                f"Fight ({_JOB['kind']}) is running… job {_JOB.get('job_id') or '—'}; "
+                "check the model-kombat kanban board or kombat_history {\"running\": true}."
+            )
         if _JOB["error"]:
             return f"Last fight failed: {_JOB['error']}"
         if _JOB["result"]:
@@ -220,32 +208,10 @@ def _handle_kombat(ctx, raw_args: str) -> str:
         return "No fight started yet in this session."
 
     if sub == "score":
-        try:
-            last = ctx.state.get("last_fight", default=None) if hasattr(ctx, "state") else None
-        except Exception:
-            last = None
-        if not last:
-            return (
-                "No fight stored in this session yet. Run /kombat fight <A> vs <B> first, "
-                "or call kombat_score_answers with answers_a/answers_b maps."
-            )
-        errors = last.get("errors") or []
-        return tools.kombat_score_answers(
-            {
-                "fighter_a": last.get("fighter_a", "Fighter A"),
-                "fighter_b": last.get("fighter_b", "Fighter B"),
-                "answers_a": last.get("answers_a", {}),
-                "answers_b": last.get("answers_b", {}),
-                "meta_a": last.get("meta_a", {}),
-                "meta_b": last.get("meta_b", {}),
-                "card": last.get("card"),
-                "fight_id": last.get("fight_id"),
-                "errors_a": [e["task"] for e in errors if e.get("fighter") == last.get("fighter_a")],
-                "errors_b": [e["task"] for e in errors if e.get("fighter") == last.get("fighter_b")],
-                "usage": last.get("usage") or {},
-                "allow_code_execution": bool(tools._cfg("allow_code_execution", False)),
-            }
-        )
+        return tools.kombat_score_answers({
+            "last": True,
+            "allow_code_execution": bool(tools._cfg("allow_code_execution", False)),
+        })
 
     if sub == "history":
         return tools.kombat_history({"limit": 10})

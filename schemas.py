@@ -66,18 +66,34 @@ KOMBAT_RUN_FIGHT = {
         "stored card id) to fight that adaptive card; omit it to fight the legacy fixed "
         "suite. Rate limits (429) are waited out within a per-fight budget and errored "
         "(task, fighter) pairs are retried a bounded number of times; exhausted pairs are "
-        "reported as errored (never failed). Requires llm.model_override enabled for this "
-        "plugin. Sudden death is fetched up front and only scored on a points tie. "
-        "`intensity` (standard/hard/gauntlet) applies when `card` is a {\"lanes\": ...} "
-        "spec: hard drops difficulty 1, gauntlet fights only difficulty 3. "
-        "Enforces a USD and token spend budget, prices tokens when the host gives no cost "
-        "(unknown models are 'n/a', never $0), and drives the kanban scoreboard and live state."
+        "reported as errored (never failed). Every LLM call has a HARD deadline "
+        "(timeout_s, default llm_timeout_s=180) enforced in a worker thread, so a hung "
+        "streamed response is abandoned and counted as an errored attempt instead of "
+        "blocking the fight. A whole-fight wall-clock cap (max_fight_seconds, default 360) "
+        "marks the remaining pairs skipped ('fight time cap') and returns a partial result "
+        "with time_cap_hit=true; scoring then excludes those pairs (round marked *). "
+        "Requires llm.model_override enabled for this plugin. Sudden death is fetched up "
+        "front and only scored on a points tie. `intensity` (standard/hard/gauntlet) "
+        "applies when `card` is a {\"lanes\": ...} spec: hard drops difficulty 1, gauntlet "
+        "fights only difficulty 3. Enforces a USD and token spend budget, prices tokens "
+        "when the host gives no cost (unknown models are 'n/a', never $0), and drives the "
+        "kanban scoreboard and live state. For LONG jobs (cards with more than ~6 tasks, "
+        "or when a single answer can take minutes) use `background: true`: it starts the "
+        "fight as a background job and returns {job_id, status:'started'} immediately; "
+        "poll kombat_history {\"running\": true} and score with kombat_score_answers "
+        "{\"last\": true}. The /kombat fight slash command always runs in the background. "
+        "Prefer a `tasks` or `card` subset to keep a single tool call under the host's "
+        "~420s tool timeout."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "fighter_a": {"type": "string", "description": "First model ID, e.g. stealth/crouton-alpha"},
             "fighter_b": {"type": "string", "description": "Second model ID, e.g. deepseek/deepseek-v4.1-flash-1017"},
+            "background": {
+                "type": "boolean",
+                "description": "Run the fight as a background job (ctx.spawn_task, like /kombat fight) and return {job_id, status:'started'} at once. Use for cards with more than 6 tasks. Poll kombat_history {\"running\": true}.",
+            },
             "card": {
                 "type": "object",
                 "description": "Fight card from kombat_scout (object), {\"lanes\":[...],\"seed\":n,\"intensity\":\"hard\"}, or {\"id\":\"card-...\"}. A stored card id string is also accepted. Omit for the legacy fixed suite.",
@@ -96,7 +112,8 @@ KOMBAT_RUN_FIGHT = {
             "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default 2000."},
             "budget_usd": {"type": "number", "description": "Stop the fight once cumulative estimated cost exceeds this. Default 2.0."},
             "budget_tokens": {"type": "integer", "description": "Stop the fight once cumulative input+output tokens exceed this (works even when prices are unknown). Default 400000."},
-            "timeout_s": {"type": "number", "description": "Per-call timeout in seconds. Default 180."},
+            "timeout_s": {"type": "number", "description": "Hard per-call deadline in seconds (worker thread abandoned at the deadline). Default from settings (llm_timeout_s, 180)."},
+            "max_fight_seconds": {"type": "number", "description": "Whole-fight wall-clock cap in seconds (default from settings, 360). Remaining pairs are marked skipped with 'fight time cap' and the fight returns time_cap_hit: true."},
             "max_rate_wait_s": {"type": "number", "description": "Longest single 429 wait in seconds (default from settings, 120)."},
             "rate_wait_budget_s": {"type": "number", "description": "Total 429 wait budget for the whole fight in seconds. Default 240."},
             "auto_rematch": {"type": "boolean", "description": "Retry errored (task, fighter) pairs inside this fight. Default from settings (true)."},
@@ -146,6 +163,10 @@ KOMBAT_SCORE_ANSWERS = {
         "winner 'draw' plus an `edge` object ({fighter, metric, reason, label}) that is an "
         "efficiency edge only — never a win. Returns winner, points, KOs, "
         "and the HTML versus scorecard path, and appends the fight to history. "
+        "Pass {\"last\": true} to score the stored last_fight without re-sending the "
+        "answer maps (the usual path after a background fight). Pairs skipped by the "
+        "fight time cap / budget stay excluded and their round is marked with an "
+        "asterisk. "
         "Use after a run tool, or whenever the user pastes two answer sets to compare."
     ),
     "parameters": {
@@ -184,8 +205,12 @@ KOMBAT_SCORE_ANSWERS = {
                 "description": "Execute code-task answers in a subprocess (timeout, not a security sandbox). Default from settings (false).",
             },
             "render_report": {"type": "boolean", "description": "Write the HTML versus scorecard. Default true."},
+            "last": {
+                "type": "boolean",
+                "description": "Score the stored last_fight from this session (answers, card, usage and errored pairs included) — no answer maps needed. Use after a background fight finishes.",
+            },
         },
-        "required": ["fighter_a", "fighter_b", "answers_a", "answers_b"],
+        "required": [],
     },
 }
 
@@ -263,12 +288,18 @@ KOMBAT_HISTORY = {
     "description": (
         "List recent completed Model Kombat fights for this profile (winner, points, "
         "report path). Use when the user asks about past fights or wants to compare "
-        "models across multiple bouts."
+        "models across multiple bouts. Pass {\"running\": true} to poll a background "
+        "fight: returns the live job state (running, job_id, started/finished, error, "
+        "result summary) plus the current live.json."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "limit": {"type": "integer", "description": "How many recent fights to return. Default 10."},
+            "running": {
+                "type": "boolean",
+                "description": "Return the live background job state + last live.json instead of fight history.",
+            },
         },
         "required": [],
     },

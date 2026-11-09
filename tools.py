@@ -10,6 +10,7 @@ matches, and subprocess execution of model-written code (opt-in only).
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import os
@@ -18,7 +19,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -416,6 +420,54 @@ def _sleep_wait(seconds: float, state: dict) -> float:
     return wait
 
 
+# --------------------------------------------- hard per-call deadline (v0.6)
+#
+# ctx.llm.complete(timeout=...) does not reliably bound a slowly streamed
+# response (observed: an 824s answer with a 420s host tool timeout). Every call
+# therefore runs in a worker thread and is abandoned at the deadline — the
+# fight never waits on a stuck provider call. Late results are discarded.
+
+_LLM_POOL: ThreadPoolExecutor | None = None
+_LLM_POOL_LOCK = threading.Lock()
+
+
+def _llm_pool() -> ThreadPoolExecutor:
+    global _LLM_POOL
+    if _LLM_POOL is None:
+        with _LLM_POOL_LOCK:
+            if _LLM_POOL is None:
+                _LLM_POOL = ThreadPoolExecutor(
+                    max_workers=8, thread_name_prefix="kombat-llm"
+                )
+    return _LLM_POOL
+
+
+def _complete_bounded(ctx, messages, fighter: str, temperature, max_tokens, timeout_s: float):
+    """Call ``ctx.llm.complete`` with a hard wall-clock deadline.
+
+    Raises ``TimeoutError`` when the deadline passes (the worker thread is
+    abandoned, not joined). Provider exceptions propagate unchanged.
+    """
+    call = ctx.llm.complete
+    future = _llm_pool().submit(
+        call,
+        messages,
+        model=fighter,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout_s,
+        purpose="model-kombat fight",
+    )
+    try:
+        return future.result(timeout=float(timeout_s) if timeout_s else None)
+    except FutureTimeout:
+        future.cancel()
+        raise TimeoutError(
+            f"LLM call exceeded hard deadline of {timeout_s}s (abandoned)"
+        ) from None
+
+
+
 def _complete_with_retry(
     ctx,
     fighter: str,
@@ -449,13 +501,8 @@ def _complete_with_retry(
     for attempt in range(1, max(1, int(max_attempts)) + 1):
         attempts = attempt
         try:
-            result = ctx.llm.complete(
-                messages,
-                model=fighter,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout_s,
-                purpose="model-kombat fight",
+            result = _complete_bounded(
+                ctx, messages, fighter, temperature, max_tokens, timeout_s
             )
             text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
             return str(text or ""), _usage_of(result, fighter), attempt, None, waited
@@ -464,7 +511,11 @@ def _complete_with_retry(
         except Exception as exc:  # noqa: BLE001 — provider errors are data, not crashes
             last_exc = exc
             is_rate, retry_after = _detect_rate_limit(exc)
-            if is_rate:
+            if isinstance(exc, TimeoutError) and not is_rate:
+                # A hung call is transient: retry quickly instead of backing off
+                # (the whole point is to stop waiting on the stuck provider).
+                wait = 0.1
+            elif is_rate:
                 want = retry_after if retry_after is not None else 8.0
                 wait = min(float(want), float(max_rate_wait_s))
             else:
@@ -811,7 +862,10 @@ def _scout_active_board(_kb) -> str | None:
 def _scout_kanban_task(task_id: str, board: str | None = None) -> tuple[dict | None, str | None]:
     try:
         try:
-            from . import kanban as _kb
+            try:
+                from . import kanban as _kb
+            except ImportError:  # top-level import outside the plugin package (tests)
+                import kanban as _kb  # type: ignore
         except ImportError:
             import kanban as _kb  # type: ignore
         board = board or _scout_active_board(_kb)
@@ -836,7 +890,10 @@ def _scout_kanban_open(limit: int = 20) -> tuple[list[dict], str | None]:
     """Open cards on the active board, resolved through `show` for full text."""
     try:
         try:
-            from . import kanban as _kb
+            try:
+                from . import kanban as _kb
+            except ImportError:  # top-level import outside the plugin package (tests)
+                import kanban as _kb  # type: ignore
         except ImportError:
             import kanban as _kb  # type: ignore
         board = _scout_active_board(_kb)
@@ -1108,8 +1165,9 @@ class _LiveAdapter:
 
     def error(self, message):
         st = self.state
-        if hasattr(st, "error"):
-            return st.error(message)
+        method = getattr(st, "error", None)
+        if callable(method):
+            return method(message)
         if hasattr(st, "fail"):
             return st.fail(message)
         return None
@@ -1122,6 +1180,134 @@ def _live_call(live_state, method: str, *args, **kwargs) -> None:
         getattr(live_state, method)(*args, **kwargs)
     except Exception:  # noqa: BLE001 — live state is best-effort
         pass
+
+
+# ------------------------------------------------------- background job state
+
+JOB: dict = {
+    "running": False,
+    "kind": None,
+    "job_id": None,
+    "started_at": None,
+    "finished_at": None,
+    "result": None,
+    "error": None,
+    "fight_id": None,
+}
+
+
+def reset_job() -> None:
+    """Tests/CLI escape hatch: forget the background job state."""
+    JOB.update(
+        running=False, kind=None, job_id=None, started_at=None,
+        finished_at=None, result=None, error=None, fight_id=None,
+    )
+
+
+def _job_mark_done() -> None:
+    JOB["running"] = False
+    JOB["finished_at"] = _now_iso()
+
+
+def start_job(ctx, kind: str, fn, fn_args: dict) -> dict:
+    """Run ``fn(fn_args)`` in the background; return immediately.
+
+    Uses ``ctx.spawn_task`` (the same path as the /kombat slash command) and
+    falls back to a daemon thread when no event loop is available. The live job
+    state is exposed through ``kombat_history({"running": true})``.
+    """
+    try:
+        if JOB.get("running"):
+            return {
+                "started": False,
+                "status": "busy",
+                "job_id": JOB.get("job_id"),
+                "message": "A fight is already running. Poll kombat_history {\"running\": true}.",
+            }
+        JOB.update(
+            running=True,
+            kind=kind,
+            job_id=f"kombat-{uuid.uuid4().hex[:8]}",
+            started_at=_now_iso(),
+            finished_at=None,
+            result=None,
+            error=None,
+            fight_id=fn_args.get("fight_id"),
+        )
+
+        def _work():
+            try:
+                JOB["result"] = fn(dict(fn_args))
+            except BaseException as exc:  # noqa: BLE001 — surfaced via job state
+                JOB["error"] = f"{type(exc).__name__}: {exc}"
+            finally:
+                _job_mark_done()
+
+        async def _runner():
+            await asyncio.to_thread(_work)
+
+        spawned = False
+        if ctx is not None and hasattr(ctx, "spawn_task"):
+            try:
+                ctx.spawn_task(_runner(), name=f"model-kombat:{kind}")
+                spawned = True
+            except Exception:  # noqa: BLE001 — no running loop
+                spawned = False
+        if not spawned:
+            threading.Thread(
+                target=_work, name=f"model-kombat:{kind}", daemon=True
+            ).start()
+        return {
+            "started": True,
+            "status": "started",
+            "job_id": JOB["job_id"],
+            "kind": kind,
+            "running": True,
+        }
+    except Exception as exc:  # noqa: BLE001 — background launch never breaks a tool
+        _job_mark_done()
+        return {"started": False, "status": "error", "error": str(exc), "job_id": JOB.get("job_id")}
+
+
+def job_snapshot() -> dict:
+    """Live job + last live.json for ``kombat_history({"running": true})``."""
+    live_data = _read_json_file(_data_dir() / "live.json", {})
+    if not isinstance(live_data, dict):
+        live_data = {}
+    result = JOB.get("result")
+    parsed = None
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+    summary = None
+    if isinstance(parsed, dict):
+        summary = {
+            "ok": parsed.get("ok"),
+            "fight_id": parsed.get("fight_id"),
+            "errors": len(parsed.get("errors") or []),
+            "time_cap_hit": parsed.get("time_cap_hit"),
+            "interrupted": parsed.get("interrupted"),
+        }
+    return {
+        "running": bool(JOB.get("running")),
+        "kind": JOB.get("kind"),
+        "job_id": JOB.get("job_id"),
+        "started_at": JOB.get("started_at"),
+        "finished_at": JOB.get("finished_at"),
+        "error": JOB.get("error"),
+        "result": summary,
+        "live": live_data,
+        "live_status": live_data.get("status"),
+        "hint": (
+            "Fight still running — poll again. Score it when done with "
+            "kombat_score_answers {\"last\": true}."
+            if JOB.get("running")
+            else "No fight running. Score the stored fight with kombat_score_answers {\"last\": true}."
+        ),
+    }
+
 
 
 def _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko, edge=None) -> str:
@@ -1140,8 +1326,58 @@ def _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko,
         return _render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko, edge=edge)
 
 
+def _live_fail(fight_id, card, fighters, reason: str) -> None:
+    """Write live.json status=error + reason when there is no live handle yet."""
+    try:
+        live_card = dict(card) if isinstance(card, dict) else {
+            "title": "Model Kombat", "lanes": [], "rounds": [],
+        }
+        live = _live_state(
+            _data_dir(), fight_id or "rematch", live_card, fighters or {},
+        )
+        _live_call(live, "error", reason)
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
+
+
+def _interrupt_bout(board, live, reason: str | None, fight_id: str | None = None) -> dict | None:
+    """Close the scoreboard + mark live.json error for a fight that never scored.
+
+    Never raises; never masks the caller's original exception.
+    """
+    reason = str(reason or "fight interrupted").strip() or "fight interrupted"
+    try:
+        _live_call(live, "error", reason)
+    except Exception:  # noqa: BLE001
+        pass
+    if board is None:
+        return None
+    try:
+        return board.interrupt(reason)
+    except BaseException:  # noqa: BLE001 — interrupt must never mask the real error
+        return None
+
+
 @_guard
 def kombat_run_fight(args: dict, **kwargs) -> str:
+    """Pure fight. ``background: true`` starts it as a job and returns at once."""
+    if isinstance(args, dict) and args.get("background"):
+        fighter_a = str(args.get("fighter_a") or _cfg("fighter_a", "") or "").strip()
+        fighter_b = str(args.get("fighter_b") or _cfg("fighter_b", "") or "").strip()
+        if not fighter_a or not fighter_b:
+            return _err("Both fighter_a and fighter_b model IDs are required.")
+        if _CTX is None or not hasattr(_CTX, "llm"):
+            return _err(
+                "No live Hermes host context (ctx.llm unavailable). Run this inside a Hermes "
+                "session with the plugin enabled, not from a bare Python import."
+            )
+        payload = {k: v for k, v in args.items() if k != "background"}
+        job = start_job(_CTX, "fight", kombat_run_fight, payload)
+        return _ok(**job)
+    return _run_fight(args)
+
+
+def _run_fight(args: dict, **kwargs) -> str:
     fighter_a = str(args.get("fighter_a") or _cfg("fighter_a", "") or "").strip()
     fighter_b = str(args.get("fighter_b") or _cfg("fighter_b", "") or "").strip()
     if not fighter_a or not fighter_b:
@@ -1183,6 +1419,9 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
             auto_rematch_cfg = _cfg("auto_rematch", True)
         auto_rematch = bool(auto_rematch_cfg)
         rematch_passes = max(0, min(2, int(args.get("max_rematch_passes", 2))))
+        max_fight_seconds = float(
+            args.get("max_fight_seconds", _cfg("max_fight_seconds", 360)) or 0
+        )
     except (TypeError, ValueError):
         return _err("temperature/max_tokens/budget_usd/timeout_s/pace_ms must be numbers.")
 
@@ -1211,11 +1450,15 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
     )
 
     # Kanban scoreboard (display only; never fails the fight). Rounds come from
-    # the fight card when there is one, so cards track the adaptive card.
+    # the fight card when there is one, so cards track the adaptive card. The
+    # board sweeps stale cards and reuses an open bout's ids on a retry.
     board = None
     if bool(_cfg("show_on_kanban", True)):
         try:
-            from . import kanban as _kb
+            try:
+                from . import kanban as _kb
+            except ImportError:  # top-level import outside the plugin package (tests)
+                import kanban as _kb  # type: ignore
 
             board_suite = {
                 "rounds": [
@@ -1223,305 +1466,373 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
                     for r in plan["rounds"]
                 ]
             }
-            board = _kb.Scoreboard(fighter_a, fighter_b, board_suite, card=card)
+            try:
+                fight_key = _kb.bout_key(
+                    fighter_a, fighter_b, card,
+                    (card or {}).get("intensity") or args.get("intensity") or _intensity(None),
+                )
+            except Exception:  # noqa: BLE001 — a key is a nicety, not a requirement
+                fight_key = None
+            board = _kb.Scoreboard(
+                fighter_a, fighter_b, board_suite, card=card, fight_key=fight_key
+            )
             board.start()
         except Exception:
             board = None
 
-    answers: dict[str, dict[str, str]] = {fighter_a: {}, fighter_b: {}}
-    meta: dict[str, dict[str, dict]] = {fighter_a: {}, fighter_b: {}}
-    errors: list[dict] = []
-    totals = {
-        fighter_a: {
-            "cost_usd": 0.0, "cost_source": "estimated", "tokens": 0,
-            "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0, "waited_s": 0.0,
-        },
-        fighter_b: {
-            "cost_usd": 0.0, "cost_source": "estimated", "tokens": 0,
-            "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0, "waited_s": 0.0,
-        },
-    }
-    sd_usage = {
-        fighter_a: {"cost_usd": 0.0, "cost_source": "unknown", "tokens": 0,
-                    "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0},
-        fighter_b: {"cost_usd": 0.0, "cost_source": "unknown", "tokens": 0,
-                    "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0},
-    }
-    cost_sources = {fighter_a: set(), fighter_b: set()}
-    budget_exceeded = False
-    budget_reason = None
-
-    def _spent_usd() -> float:
-        return sum(
-            float(slot["cost_usd"])
-            for slot in totals.values()
-            if isinstance(slot.get("cost_usd"), (int, float))
-        )
-
-    def _spent_tokens() -> int:
-        return sum(int(slot.get("tokens") or 0) for slot in totals.values())
-
-    def _note_cost(fighter: str, usage: dict) -> float | None:
-        """Fold one call's usage into the fighter totals; returns its cost."""
-        slot = totals[fighter]
-        cost = usage.get("cost_usd")
-        source = str(usage.get("cost_source") or "unknown")
-        cost_sources[fighter].add(source)
-        try:
-            slot["input_tokens"] += int(usage.get("input_tokens") or 0)
-            slot["output_tokens"] += int(usage.get("output_tokens") or 0)
-            slot["tokens"] += int(
-                usage.get("total_tokens") or usage.get("output_tokens") or 0
-            )
-        except (TypeError, ValueError):
-            pass
-        if cost is None or source == "unknown":
-            slot["cost_usd"] = None
-        else:
-            try:
-                if slot.get("cost_usd") is not None:
-                    slot["cost_usd"] = round(float(slot["cost_usd"]) + float(cost), 9)
-            except (TypeError, ValueError):
-                slot["cost_usd"] = None
-        return cost if isinstance(cost, (int, float)) else None
-
-    def _check_budget() -> None:
-        nonlocal budget_exceeded, budget_reason
-        if _spent_usd() > budget:
-            budget_exceeded = True
-            budget_reason = f"USD cap ${budget:.4f} exceeded"
-        elif _spent_tokens() > token_budget:
-            budget_exceeded = True
-            budget_reason = f"token cap {token_budget} exceeded"
-
-    def call_pair(tid: str, fighter: str, *, is_sudden_death: bool = False) -> None:
-        """One (task, fighter) call; updates answers/meta/totals/live. Raises PermissionError."""
-        task = tasks_by_id[tid]
-        side = "a" if fighter == fighter_a else "b"
-        if pace_s:
-            time.sleep(pace_s)
-        started = time.perf_counter()
-        text, usage, attempts, err, waited = _complete_with_retry(
-            _CTX, fighter, task["prompt"], temperature, max_tokens, timeout_s,
-            max_attempts=int(args.get("max_attempts", 3) or 3),
-            max_rate_wait_s=max_rate_wait_s,
-            wait_state=wait_state,
-        )
-        latency = round(time.perf_counter() - started, 3)
-        answers[fighter][tid] = text
-        meta[fighter][tid] = {
-            "latency_s": latency,
-            "usage": usage,
-            "attempts": attempts,
-            "waited_s": waited,
-            "error": err,
-            "status": "errored" if err else "scored",
-            "sudden_death": bool(is_sudden_death),
+    answered_ok = False
+    interrupt_reason: str | None = None
+    fight_started = time.time()
+    try:
+        answers: dict[str, dict[str, str]] = {fighter_a: {}, fighter_b: {}}
+        meta: dict[str, dict[str, dict]] = {fighter_a: {}, fighter_b: {}}
+        errors: list[dict] = []
+        totals = {
+            fighter_a: {
+                "cost_usd": 0.0, "cost_source": "estimated", "tokens": 0,
+                "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0, "waited_s": 0.0,
+            },
+            fighter_b: {
+                "cost_usd": 0.0, "cost_source": "estimated", "tokens": 0,
+                "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0, "waited_s": 0.0,
+            },
         }
-        totals[fighter]["latency_s"] += latency
-        totals[fighter]["waited_s"] += waited
-        cost = _note_cost(fighter, usage) if usage else None
-        if is_sudden_death:
-            sd_slot = sd_usage[fighter]
-            sd_slot["latency_s"] += latency
+        sd_usage = {
+            fighter_a: {"cost_usd": 0.0, "cost_source": "unknown", "tokens": 0,
+                        "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0},
+            fighter_b: {"cost_usd": 0.0, "cost_source": "unknown", "tokens": 0,
+                        "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0},
+        }
+        cost_sources = {fighter_a: set(), fighter_b: set()}
+        budget_exceeded = False
+        budget_reason = None
+
+        def _spent_usd() -> float:
+            return sum(
+                float(slot["cost_usd"])
+                for slot in totals.values()
+                if isinstance(slot.get("cost_usd"), (int, float))
+            )
+
+        def _spent_tokens() -> int:
+            return sum(int(slot.get("tokens") or 0) for slot in totals.values())
+
+        def _note_cost(fighter: str, usage: dict) -> float | None:
+            """Fold one call's usage into the fighter totals; returns its cost."""
+            slot = totals[fighter]
+            cost = usage.get("cost_usd")
+            source = str(usage.get("cost_source") or "unknown")
+            cost_sources[fighter].add(source)
             try:
-                sd_slot["input_tokens"] += int(usage.get("input_tokens") or 0)
-                sd_slot["output_tokens"] += int(usage.get("output_tokens") or 0)
-                sd_slot["tokens"] += int(
+                slot["input_tokens"] += int(usage.get("input_tokens") or 0)
+                slot["output_tokens"] += int(usage.get("output_tokens") or 0)
+                slot["tokens"] += int(
                     usage.get("total_tokens") or usage.get("output_tokens") or 0
                 )
             except (TypeError, ValueError):
                 pass
-            if usage.get("cost_usd") is None:
-                sd_slot["cost_usd"] = None
-            elif sd_slot.get("cost_usd") is not None:
+            if cost is None or source == "unknown":
+                slot["cost_usd"] = None
+            else:
                 try:
-                    sd_slot["cost_usd"] = round(float(sd_slot["cost_usd"]) + float(usage["cost_usd"]), 9)
+                    if slot.get("cost_usd") is not None:
+                        slot["cost_usd"] = round(float(slot["cost_usd"]) + float(cost), 9)
                 except (TypeError, ValueError):
-                    sd_slot["cost_usd"] = None
-            if usage.get("cost_source"):
-                sd_slot["cost_source"] = usage["cost_source"]
-        _live_call(
-            live, "task_update", tid, side,
-            state="error" if err else "done",
-            score=None,
-            latency_s=latency,
-            cost_usd=cost,
-            detail=(err or "")[:400],
-        )
-        if err:
-            errors.append({"task": tid, "fighter": fighter, "error": err})
-        _check_budget()
+                    slot["cost_usd"] = None
+            return cost if isinstance(cost, (int, float)) else None
 
-    for rnd in plan["rounds"]:
-        _live_call(live, "round_state", rnd["id"], "fighting")
-        if board is not None:
-            board.round_fighting(rnd["id"])
-        for tid in rnd["tasks"]:
-            _live_call(live, "task_update", tid, "a", state="fighting")
-            _live_call(live, "task_update", tid, "b", state="fighting")
-            for fighter in (fighter_a, fighter_b):
+        def _check_budget() -> None:
+            nonlocal budget_exceeded, budget_reason
+            if _spent_usd() > budget:
+                budget_exceeded = True
+                budget_reason = f"USD cap ${budget:.4f} exceeded"
+            elif _spent_tokens() > token_budget:
+                budget_exceeded = True
+                budget_reason = f"token cap {token_budget} exceeded"
+
+        time_cap_hit = False
+
+        def _time_capped() -> bool:
+            """Whole-fight wall-clock cap (default 360s, under the host's 420s)."""
+            nonlocal time_cap_hit
+            if max_fight_seconds > 0 and (time.time() - fight_started) >= max_fight_seconds:
+                time_cap_hit = True
+            return time_cap_hit
+
+        def call_pair(tid: str, fighter: str, *, is_sudden_death: bool = False) -> None:
+            """One (task, fighter) call; updates answers/meta/totals/live. Raises PermissionError."""
+            task = tasks_by_id[tid]
+            side = "a" if fighter == fighter_a else "b"
+            if pace_s:
+                time.sleep(pace_s)
+            started = time.perf_counter()
+            text, usage, attempts, err, waited = _complete_with_retry(
+                _CTX, fighter, task["prompt"], temperature, max_tokens, timeout_s,
+                max_attempts=int(args.get("max_attempts", 3) or 3),
+                max_rate_wait_s=max_rate_wait_s,
+                wait_state=wait_state,
+            )
+            latency = round(time.perf_counter() - started, 3)
+            answers[fighter][tid] = text
+            meta[fighter][tid] = {
+                "latency_s": latency,
+                "usage": usage,
+                "attempts": attempts,
+                "waited_s": waited,
+                "error": err,
+                "status": "errored" if err else "scored",
+                "sudden_death": bool(is_sudden_death),
+            }
+            totals[fighter]["latency_s"] += latency
+            totals[fighter]["waited_s"] += waited
+            cost = _note_cost(fighter, usage) if usage else None
+            if is_sudden_death:
+                sd_slot = sd_usage[fighter]
+                sd_slot["latency_s"] += latency
                 try:
-                    call_pair(tid, fighter)
+                    sd_slot["input_tokens"] += int(usage.get("input_tokens") or 0)
+                    sd_slot["output_tokens"] += int(usage.get("output_tokens") or 0)
+                    sd_slot["tokens"] += int(
+                        usage.get("total_tokens") or usage.get("output_tokens") or 0
+                    )
+                except (TypeError, ValueError):
+                    pass
+                if usage.get("cost_usd") is None:
+                    sd_slot["cost_usd"] = None
+                elif sd_slot.get("cost_usd") is not None:
+                    try:
+                        sd_slot["cost_usd"] = round(float(sd_slot["cost_usd"]) + float(usage["cost_usd"]), 9)
+                    except (TypeError, ValueError):
+                        sd_slot["cost_usd"] = None
+                if usage.get("cost_source"):
+                    sd_slot["cost_source"] = usage["cost_source"]
+            _live_call(
+                live, "task_update", tid, side,
+                state="error" if err else "done",
+                score=None,
+                latency_s=latency,
+                cost_usd=cost,
+                detail=(err or "")[:400],
+            )
+            if err:
+                errors.append({"task": tid, "fighter": fighter, "error": err})
+            _check_budget()
+
+        for rnd in plan["rounds"]:
+            if _time_capped() or budget_exceeded:
+                break
+            _live_call(live, "round_state", rnd["id"], "fighting")
+            if board is not None:
+                board.round_fighting(rnd["id"])
+            for tid in rnd["tasks"]:
+                if _time_capped():
+                    break
+                _live_call(live, "task_update", tid, "a", state="fighting")
+                _live_call(live, "task_update", tid, "b", state="fighting")
+                for fighter in (fighter_a, fighter_b):
+                    if _time_capped():
+                        break
+                    try:
+                        call_pair(tid, fighter)
+                    except PermissionError as exc:
+                        _live_call(live, "error", f"host refused model override: {exc}")
+                        interrupt_reason = f"host refused model override: {exc}"
+                        if board is not None:
+                            board.abort()
+                        return _err(
+                            f"Host refused the model override: {exc}. "
+                            "Enable it in config.yaml: plugins.entries.model-kombat.llm."
+                            "allow_model_override: true (optionally restrict with allowed_models), "
+                            "then retry the fight. Nothing was sent.",
+                            partial={"answers_a": answers[fighter_a], "answers_b": answers[fighter_b]},
+                        )
+                    if budget_exceeded:
+                        break
+                if budget_exceeded:
+                    break
+            if budget_exceeded:
+                break
+
+        # Sudden death is fetched up front (one cheap extra task per fighter) so a
+        # tie after the Championship can be decided without a second run. Scoring
+        # only uses these answers on a points tie.
+        sd_task = str(plan.get("sudden_death_task") or "").strip() or None
+        round_task_ids = {tid for rnd in plan["rounds"] for tid in rnd["tasks"]}
+        if sd_task and sd_task in round_task_ids:
+            sd_task = None  # already a normal round task; no separate SD fetch
+        if sd_task and sd_task in tasks_by_id and not budget_exceeded and not _time_capped():
+            for fighter in (fighter_a, fighter_b):
+                if _time_capped():
+                    break
+                try:
+                    call_pair(sd_task, fighter, is_sudden_death=True)
                 except PermissionError as exc:
                     _live_call(live, "error", f"host refused model override: {exc}")
+                    interrupt_reason = f"host refused model override (sudden death): {exc}"
                     if board is not None:
                         board.abort()
                     return _err(
-                        f"Host refused the model override: {exc}. "
-                        "Enable it in config.yaml: plugins.entries.model-kombat.llm."
-                        "allow_model_override: true (optionally restrict with allowed_models), "
-                        "then retry the fight. Nothing was sent.",
-                        partial={"answers_a": answers[fighter_a], "answers_b": answers[fighter_b]},
+                        f"Host refused the model override for sudden death: {exc}. "
+                        "Enable plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
                     )
                 if budget_exceeded:
                     break
-            if budget_exceeded:
-                break
-        if budget_exceeded:
-            break
 
-    # Sudden death is fetched up front (one cheap extra task per fighter) so a
-    # tie after the Championship can be decided without a second run. Scoring
-    # only uses these answers on a points tie.
-    sd_task = str(plan.get("sudden_death_task") or "").strip() or None
-    round_task_ids = {tid for rnd in plan["rounds"] for tid in rnd["tasks"]}
-    if sd_task and sd_task in round_task_ids:
-        sd_task = None  # already a normal round task; no separate SD fetch
-    if sd_task and sd_task in tasks_by_id and not budget_exceeded:
-        for fighter in (fighter_a, fighter_b):
-            try:
-                call_pair(sd_task, fighter, is_sudden_death=True)
-            except PermissionError as exc:
-                _live_call(live, "error", f"host refused model override: {exc}")
-                if board is not None:
-                    board.abort()
-                return _err(
-                    f"Host refused the model override for sudden death: {exc}. "
-                    "Enable plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
-                )
-            if budget_exceeded:
-                break
-
-    # Bounded auto-rematch of errored (task, fighter) pairs inside this fight.
-    rematch_passes_done = 0
-    if auto_rematch and errors and not budget_exceeded:
-        for pass_no in range(1, rematch_passes + 1):
-            if not errors or budget_exceeded:
-                break
-            rematch_passes_done = pass_no
-            prior = list(errors)
-            errors = []
-            for entry in prior:
-                tid = entry.get("task")
-                fighter = entry.get("fighter")
-                if tid not in tasks_by_id or fighter not in (fighter_a, fighter_b):
-                    errors.append(entry)
-                    continue
-                try:
-                    call_pair(tid, fighter)
-                except PermissionError as exc:
-                    _live_call(live, "error", f"host refused model override: {exc}")
-                    if board is not None:
-                        board.abort()
-                    return _err(f"Host refused the model override during auto-rematch: {exc}.")
-                if not meta.get(fighter, {}).get(tid, {}).get("error"):
-                    continue  # recovered — drop the error
-                errors.append({**entry, "pass": pass_no})
-                if budget_exceeded:
+        # Bounded auto-rematch of errored (task, fighter) pairs inside this fight.
+        rematch_passes_done = 0
+        if auto_rematch and errors and not budget_exceeded and not _time_capped():
+            for pass_no in range(1, rematch_passes + 1):
+                if not errors or budget_exceeded or _time_capped():
                     break
-            if not errors:
-                break
+                rematch_passes_done = pass_no
+                prior = list(errors)
+                errors = []
+                for position, entry in enumerate(prior):
+                    if _time_capped():
+                        errors.extend(prior[position:])
+                        break
+                    tid = entry.get("task")
+                    fighter = entry.get("fighter")
+                    if tid not in tasks_by_id or fighter not in (fighter_a, fighter_b):
+                        errors.append(entry)
+                        continue
+                    try:
+                        call_pair(tid, fighter)
+                    except PermissionError as exc:
+                        _live_call(live, "error", f"host refused model override: {exc}")
+                        interrupt_reason = f"host refused model override (auto-rematch): {exc}"
+                        if board is not None:
+                            board.abort()
+                        return _err(f"Host refused the model override during auto-rematch: {exc}.")
+                    if not meta.get(fighter, {}).get(tid, {}).get("error"):
+                        continue  # recovered — drop the error
+                    errors.append({**entry, "pass": pass_no})
+                    if budget_exceeded:
+                        break
+                if not errors:
+                    break
 
-    # Aggregate cost provenance per fighter (unknown beats estimated beats host).
-    for fighter in (fighter_a, fighter_b):
-        srcs = cost_sources[fighter]
-        if "unknown" in srcs or not srcs:
-            totals[fighter]["cost_source"] = "unknown"
-        elif "estimated" in srcs:
-            totals[fighter]["cost_source"] = "estimated"
-        else:
-            totals[fighter]["cost_source"] = "host"
+        # Aggregate cost provenance per fighter (unknown beats estimated beats host).
+        for fighter in (fighter_a, fighter_b):
+            srcs = cost_sources[fighter]
+            if "unknown" in srcs or not srcs:
+                totals[fighter]["cost_source"] = "unknown"
+            elif "estimated" in srcs:
+                totals[fighter]["cost_source"] = "estimated"
+            else:
+                totals[fighter]["cost_source"] = "host"
 
-    # Budget stop: every pair that was never attempted is skipped/errored, not failed.
-    planned_pairs = [
-        (tid, fighter)
-        for rnd in plan["rounds"]
-        for tid in rnd["tasks"]
-        for fighter in (fighter_a, fighter_b)
-    ]
-    if sd_task:
-        planned_pairs.extend((sd_task, fighter) for fighter in (fighter_a, fighter_b))
-    for tid, fighter in planned_pairs:
-        if tid in meta.get(fighter, {}):
-            continue
-        reason = f"not attempted: {budget_reason}" if budget_exceeded else "not attempted"
-        meta[fighter][tid] = {
-            "latency_s": 0.0, "usage": {}, "attempts": 0, "waited_s": 0.0,
-            "error": reason, "status": "skipped", "sudden_death": tid == sd_task,
+        # Budget / time-cap stop: every pair that was never attempted is
+        # skipped/errored, never failed.
+        planned_pairs = [
+            (tid, fighter)
+            for rnd in plan["rounds"]
+            for tid in rnd["tasks"]
+            for fighter in (fighter_a, fighter_b)
+        ]
+        if sd_task:
+            planned_pairs.extend((sd_task, fighter) for fighter in (fighter_a, fighter_b))
+        for tid, fighter in planned_pairs:
+            if tid in meta.get(fighter, {}):
+                continue
+            if budget_exceeded:
+                reason = f"not attempted: {budget_reason}"
+            elif time_cap_hit:
+                reason = "not attempted: fight time cap"
+            else:
+                reason = "not attempted"
+            meta[fighter][tid] = {
+                "latency_s": 0.0, "usage": {}, "attempts": 0, "waited_s": 0.0,
+                "error": reason, "status": "skipped", "sudden_death": tid == sd_task,
+            }
+            answers[fighter].setdefault(tid, "")
+            errors.append({"task": tid, "fighter": fighter, "error": reason, "status": "skipped"})
+
+        budget_info = {
+            "exceeded": bool(budget_exceeded),
+            "reason": budget_reason,
+            "cap_usd": budget,
+            "cap_tokens": token_budget,
+            "cap_seconds": max_fight_seconds,
+            "time_cap_hit": bool(time_cap_hit),
+            "spent_usd": round(_spent_usd(), 9),
+            "spent_tokens": _spent_tokens(),
+            "elapsed_s": round(time.time() - fight_started, 3),
         }
-        answers[fighter].setdefault(tid, "")
-        errors.append({"task": tid, "fighter": fighter, "error": reason, "status": "skipped"})
 
-    budget_info = {
-        "exceeded": bool(budget_exceeded),
-        "reason": budget_reason,
-        "cap_usd": budget,
-        "cap_tokens": token_budget,
-        "spent_usd": round(_spent_usd(), 9),
-        "spent_tokens": _spent_tokens(),
-    }
+        # A budget stop returns the partial answers, but the bout never reaches
+        # scoring as a complete fight → close its cards in the finally block.
+        if budget_exceeded:
+            interrupt_reason = f"budget stop: {budget_reason}"
+        else:
+            answered_ok = True
 
-    fight = {
-        "fight_id": fight_id,
-        "fighter_a": fighter_a,
-        "fighter_b": fighter_b,
-        "mode": "pure",
-        "card": card,
-        "plan_rounds": plan["rounds"],
-        "sudden_death_task": plan.get("sudden_death_task"),
-        "sudden_death_usage": sd_usage,
-        "answers_a": answers[fighter_a],
-        "answers_b": answers[fighter_b],
-        "meta_a": meta[fighter_a],
-        "meta_b": meta[fighter_b],
-        "errors": errors,
-        "usage": totals,
-        "budget": budget_info,
-        "budget_exceeded": budget_exceeded,
-        "kanban": board.ids if board is not None else None,
-        "rematch_passes": rematch_passes_done,
-        "waited_s": {fighter: totals[fighter]["waited_s"] for fighter in totals},
-    }
-    try:
-        if hasattr(_CTX, "state"):
-            _CTX.state.set("last_fight", fight)
-    except Exception:
-        pass
+        fight = {
+            "fight_id": fight_id,
+            "fighter_a": fighter_a,
+            "fighter_b": fighter_b,
+            "mode": "pure",
+            "card": card,
+            "plan_rounds": plan["rounds"],
+            "sudden_death_task": plan.get("sudden_death_task"),
+            "sudden_death_usage": sd_usage,
+            "answers_a": answers[fighter_a],
+            "answers_b": answers[fighter_b],
+            "meta_a": meta[fighter_a],
+            "meta_b": meta[fighter_b],
+            "errors": errors,
+            "usage": totals,
+            "budget": budget_info,
+            "budget_exceeded": budget_exceeded,
+            "time_cap_hit": bool(time_cap_hit),
+            "interrupted": bool(interrupt_reason),
+            "kanban": board.ids if board is not None else None,
+            "rematch_passes": rematch_passes_done,
+            "waited_s": {fighter: totals[fighter]["waited_s"] for fighter in totals},
+        }
+        try:
+            if hasattr(_CTX, "state"):
+                _CTX.state.set("last_fight", fight)
+        except Exception:
+            pass
 
-    return _ok(
-        fight_id=fight_id,
-        fighters=[fighter_a, fighter_b],
-        card=card,
-        mode=plan["mode"],
-        intensity=(card or {}).get("intensity"),
-        rounds=[tid for rnd in plan["rounds"] for tid in rnd["tasks"]],
-        answers_a=answers[fighter_a],
-        answers_b=answers[fighter_b],
-        meta_a=meta[fighter_a],
-        meta_b=meta[fighter_b],
-        errors=errors,
-        usage=totals,
-        sudden_death_task=fight.get("sudden_death_task"),
-        sudden_death_usage=sd_usage,
-        budget=budget_info,
-        budget_exceeded=budget_exceeded,
-        rematch_passes=rematch_passes_done,
-        waited_s=fight["waited_s"],
-        live=live is not None,
-        kanban=board.ids if board is not None else None,
-        kanban_errors=board.errors if board is not None else [],
-    )
+        return _ok(
+            fight_id=fight_id,
+            fighters=[fighter_a, fighter_b],
+            card=card,
+            mode=plan["mode"],
+            intensity=(card or {}).get("intensity"),
+            rounds=[tid for rnd in plan["rounds"] for tid in rnd["tasks"]],
+            answers_a=answers[fighter_a],
+            answers_b=answers[fighter_b],
+            meta_a=meta[fighter_a],
+            meta_b=meta[fighter_b],
+            errors=errors,
+            usage=totals,
+            sudden_death_task=fight.get("sudden_death_task"),
+            sudden_death_usage=sd_usage,
+            budget=budget_info,
+            budget_exceeded=budget_exceeded,
+            rematch_passes=rematch_passes_done,
+            waited_s=fight["waited_s"],
+            live=live is not None,
+            kanban=board.ids if board is not None else None,
+            kanban_errors=board.errors if board is not None else [],
+            time_cap_hit=bool(time_cap_hit),
+            interrupted=bool(interrupt_reason),
+            stale_closed=int(getattr(board, "stale_closed", 0) or 0),
+            bout_reused=bool(getattr(board, "bout_reused", False)),
+        )
+
+
+    except BaseException as exc:  # KeyboardInterrupt / SystemExit / any crash
+        interrupt_reason = interrupt_reason or f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        # The fight only closes its cards itself when it reached the end of the
+        # run without a budget stop; otherwise the bout is interrupted here.
+        if not answered_ok:
+            _interrupt_bout(board, live, interrupt_reason, fight_id)
 
 
 @_guard
@@ -1567,129 +1878,148 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
     except (TypeError, ValueError):
         return _err("temperature/max_tokens/budget_usd/timeout_s must be numbers.")
 
+    board = None
+    completed = False
+    reason: str | None = None
     fighters = (last.get("fighter_a"), last.get("fighter_b"))
-    answers = {fighters[0]: dict(last.get("answers_a") or {}),
-               fighters[1]: dict(last.get("answers_b") or {})}
-    meta = {fighters[0]: dict(last.get("meta_a") or {}),
-            fighters[1]: dict(last.get("meta_b") or {})}
-    usage = dict(last.get("usage") or {})
-    rematched, still_failing = [], []
-    spend = 0.0
-    tokens_spent = 0
+    try:
+        answers = {fighters[0]: dict(last.get("answers_a") or {}),
+                   fighters[1]: dict(last.get("answers_b") or {})}
+        meta = {fighters[0]: dict(last.get("meta_a") or {}),
+                fighters[1]: dict(last.get("meta_b") or {})}
+        usage = dict(last.get("usage") or {})
+        rematched, still_failing = [], []
+        spend = 0.0
+        tokens_spent = 0
 
-    for err in errors:
-        tid, fighter = err.get("task"), err.get("fighter")
-        if tid not in tasks_by_id or fighter not in fighters:
-            still_failing.append(err)
-            continue
-        if pace_ms > 0:
-            time.sleep(pace_ms / 1000.0)
-        try:
-            text, call_usage, attempts, call_err, call_waited = _complete_with_retry(
-                _CTX, fighter, tasks_by_id[tid]["prompt"], temperature, max_tokens, timeout_s,
-                max_rate_wait_s=max_rate_wait_s, wait_state=wait_state,
-            )
-        except PermissionError as exc:
-            return _err(
-                f"Host refused the model override during rematch: {exc}. "
-                "Check plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
-            )
-        spend += float(call_usage.get("cost_usd") or 0.0)
-        tokens_spent += int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
-        if call_err:
-            still_failing.append({"task": tid, "fighter": fighter, "error": call_err})
-            answers[fighter][tid] = text
-            meta[fighter][tid] = {"error": call_err, "attempts": attempts, "latency_s": 0, "usage": call_usage}
-        else:
-            rematched.append({"task": tid, "fighter": fighter})
-            answers[fighter][tid] = text
-            meta[fighter][tid] = {"error": None, "attempts": attempts, "latency_s": 0, "usage": call_usage}
-        slot = usage.setdefault(fighter, {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0})
-        slot["waited_s"] = round(float(slot.get("waited_s") or 0.0) + float(call_waited or 0.0), 3)
-        call_cost = call_usage.get("cost_usd")
-        if call_cost is None:
-            slot["cost_usd"] = None
-        elif slot.get("cost_usd") is not None:
+        for err in errors:
+            tid, fighter = err.get("task"), err.get("fighter")
+            if tid not in tasks_by_id or fighter not in fighters:
+                still_failing.append(err)
+                continue
+            if pace_ms > 0:
+                time.sleep(pace_ms / 1000.0)
             try:
-                slot["cost_usd"] = round(float(slot["cost_usd"]) + float(call_cost), 9)
-            except (TypeError, ValueError):
-                slot["cost_usd"] = None
-        slot["tokens"] = int(slot.get("tokens") or 0) + int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
-        slot["input_tokens"] = int(slot.get("input_tokens") or 0) + int(call_usage.get("input_tokens") or 0)
-        slot["output_tokens"] = int(slot.get("output_tokens") or 0) + int(call_usage.get("output_tokens") or 0)
-        if spend > budget or tokens_spent > token_budget:
-            still_failing.extend(e for e in errors if e not in still_failing and e not in rematched)
-            break
-
-    last.update(
-        {
-            "answers_a": answers[fighters[0]],
-            "answers_b": answers[fighters[1]],
-            "meta_a": meta[fighters[0]],
-            "meta_b": meta[fighters[1]],
-            "errors": still_failing,
-            "usage": usage,
-        }
-    )
-    try:
-        _CTX.state.set("last_fight", last)
-    except Exception:
-        pass
-
-    # Best-effort kanban: a rematch is a NEW bout on the board (the original
-    # cards are already done and can't be re-completed), so post fresh cards
-    # for the affected rounds and point last_fight at them for scoring.
-    kanban_note = None
-    try:
-        from . import kanban as _kb
-
-        if bool(_cfg("show_on_kanban", True)):
-            affected = sorted(
-                {
-                    r["id"]
-                    for r in (last.get("plan_rounds") or suite["rounds"])
-                    if any(t in {e.get("task") for e in errors} for t in r["tasks"])
-                }
-            )
-            board = _kb.Scoreboard(
-                fighters[0], fighters[1],
-                {"rounds": last.get("plan_rounds") or suite["rounds"]},
-            )
-            board.start(round_ids=affected or None, title_prefix="REMATCH")
-            if board.ids.get("parent"):
-                board._run(
-                    _kb._cli(
-                        "--board", _kb.BOARD, "comment", board.ids["parent"],
-                        f"Rematch of {len(errors)} errored task(s): {len(rematched)} re-fought, "
-                        f"{len(still_failing)} still failing. Original fight card: {last.get('kanban', {}).get('parent')}.",
-                    )
+                text, call_usage, attempts, call_err, call_waited = _complete_with_retry(
+                    _CTX, fighter, tasks_by_id[tid]["prompt"], temperature, max_tokens, timeout_s,
+                    max_rate_wait_s=max_rate_wait_s, wait_state=wait_state,
                 )
-            last["kanban"] = board.ids
-            try:
-                _CTX.state.set("last_fight", last)  # persist new kanban ids for scoring
-            except Exception:
-                pass
-            kanban_note = (
-                f"rematch bout posted on kanban board '{_kb.BOARD}' (parent={board.ids.get('parent')})"
-                if board.ids.get("parent")
-                else f"kanban rematch cards failed: {board.errors[:1]}"
-            )
-    except Exception as exc:
-        kanban_note = f"kanban rematch cards skipped: {exc}"
+            except PermissionError as exc:
+                return _err(
+                    f"Host refused the model override during rematch: {exc}. "
+                    "Check plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
+                )
+            spend += float(call_usage.get("cost_usd") or 0.0)
+            tokens_spent += int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
+            if call_err:
+                still_failing.append({"task": tid, "fighter": fighter, "error": call_err})
+                answers[fighter][tid] = text
+                meta[fighter][tid] = {"error": call_err, "attempts": attempts, "latency_s": 0, "usage": call_usage}
+            else:
+                rematched.append({"task": tid, "fighter": fighter})
+                answers[fighter][tid] = text
+                meta[fighter][tid] = {"error": None, "attempts": attempts, "latency_s": 0, "usage": call_usage}
+            slot = usage.setdefault(fighter, {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0})
+            slot["waited_s"] = round(float(slot.get("waited_s") or 0.0) + float(call_waited or 0.0), 3)
+            call_cost = call_usage.get("cost_usd")
+            if call_cost is None:
+                slot["cost_usd"] = None
+            elif slot.get("cost_usd") is not None:
+                try:
+                    slot["cost_usd"] = round(float(slot["cost_usd"]) + float(call_cost), 9)
+                except (TypeError, ValueError):
+                    slot["cost_usd"] = None
+            slot["tokens"] = int(slot.get("tokens") or 0) + int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
+            slot["input_tokens"] = int(slot.get("input_tokens") or 0) + int(call_usage.get("input_tokens") or 0)
+            slot["output_tokens"] = int(slot.get("output_tokens") or 0) + int(call_usage.get("output_tokens") or 0)
+            if spend > budget or tokens_spent > token_budget:
+                still_failing.extend(e for e in errors if e not in still_failing and e not in rematched)
+                break
 
-    return _ok(
-        fighters=list(fighters),
-        rematched=rematched,
-        still_failing=still_failing,
-        errors=still_failing,
-        answers_a=answers[fighters[0]],
-        answers_b=answers[fighters[1]],
-        usage=usage,
-        kanban=kanban_note,
-    )
+        last.update(
+            {
+                "answers_a": answers[fighters[0]],
+                "answers_b": answers[fighters[1]],
+                "meta_a": meta[fighters[0]],
+                "meta_b": meta[fighters[1]],
+                "errors": still_failing,
+                "usage": usage,
+            }
+        )
+        try:
+            _CTX.state.set("last_fight", last)
+        except Exception:
+            pass
+
+        # Best-effort kanban: a rematch is a NEW bout on the board (the original
+        # cards are already done and can't be re-completed), so post fresh cards
+        # for the affected rounds and point last_fight at them for scoring.
+        kanban_note = None
+        try:
+            try:
+                from . import kanban as _kb
+            except ImportError:  # top-level import outside the plugin package (tests)
+                import kanban as _kb  # type: ignore
+
+            if bool(_cfg("show_on_kanban", True)):
+                affected = sorted(
+                    {
+                        r["id"]
+                        for r in (last.get("plan_rounds") or suite["rounds"])
+                        if any(t in {e.get("task") for e in errors} for t in r["tasks"])
+                    }
+                )
+                board = _kb.Scoreboard(
+                    fighters[0], fighters[1],
+                    {"rounds": last.get("plan_rounds") or suite["rounds"]},
+                )
+                board.start(round_ids=affected or None, title_prefix="REMATCH")
+                if board.ids.get("parent"):
+                    board._run(
+                        _kb._cli(
+                            "--board", _kb.BOARD, "comment", board.ids["parent"],
+                            f"Rematch of {len(errors)} errored task(s): {len(rematched)} re-fought, "
+                            f"{len(still_failing)} still failing. Original fight card: {last.get('kanban', {}).get('parent')}.",
+                        )
+                    )
+                last["kanban"] = board.ids
+                try:
+                    _CTX.state.set("last_fight", last)  # persist new kanban ids for scoring
+                except Exception:
+                    pass
+                kanban_note = (
+                    f"rematch bout posted on kanban board '{_kb.BOARD}' (parent={board.ids.get('parent')})"
+                    if board.ids.get("parent")
+                    else f"kanban rematch cards failed: {board.errors[:1]}"
+                )
+        except Exception as exc:
+            kanban_note = f"kanban rematch cards skipped: {exc}"
+
+        completed = True
+        return _ok(
+            fighters=list(fighters),
+            rematched=rematched,
+            still_failing=still_failing,
+            errors=still_failing,
+            answers_a=answers[fighters[0]],
+            answers_b=answers[fighters[1]],
+            usage=usage,
+            kanban=kanban_note,
+        )
+
+    except BaseException as exc:  # KeyboardInterrupt / SystemExit / any crash
+        reason = reason or f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        if not completed:
+            _interrupt_bout(board, None, reason, (last or {}).get("fight_id"))
+            _live_fail((last or {}).get("fight_id"), (last or {}).get("card"), {
+                "a": (last or {}).get("fighter_a"), "b": (last or {}).get("fighter_b"),
+            }, reason or "rematch interrupted")
 
 
 # ---------------------------------------------------------------- scorers
+
 
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
@@ -2103,8 +2433,46 @@ def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict) -> dict:
     }
 
 
+def _last_fight_score_args() -> dict | None:
+    """Build kombat_score_answers args from the stored last_fight (``{"last": true}``)."""
+    if _CTX is None or not hasattr(_CTX, "state"):
+        return None
+    try:
+        last = _CTX.state.get("last_fight", default=None)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(last, dict) or not last:
+        return None
+    errors = last.get("errors") or []
+    fighter_a = last.get("fighter_a")
+    fighter_b = last.get("fighter_b")
+    derived = {
+        "fighter_a": fighter_a,
+        "fighter_b": fighter_b,
+        "answers_a": last.get("answers_a") or {},
+        "answers_b": last.get("answers_b") or {},
+        "meta_a": last.get("meta_a") or {},
+        "meta_b": last.get("meta_b") or {},
+        "usage": last.get("usage") or {},
+        "fight_id": last.get("fight_id"),
+        "errors_a": [e.get("task") for e in errors if isinstance(e, dict) and e.get("fighter") == fighter_a],
+        "errors_b": [e.get("task") for e in errors if isinstance(e, dict) and e.get("fighter") == fighter_b],
+    }
+    card = last.get("card")
+    if isinstance(card, dict) and card.get("rounds"):
+        derived["card"] = card
+    return derived
+
+
 @_guard
 def kombat_score_answers(args: dict, **kwargs) -> str:
+    if args.get("last") and not (args.get("answers_a") or args.get("answers_b")):
+        derived = _last_fight_score_args()
+        if not derived:
+            return _err("No fight stored in this session yet — run kombat_run_fight first.")
+        merged = dict(derived)
+        merged.update({k: v for k, v in args.items() if k != "last"})
+        args = merged
     fighter_a = str(args.get("fighter_a") or "Fighter A").strip()
     fighter_b = str(args.get("fighter_b") or "Fighter B").strip()
     answers_a = args.get("answers_a") or {}
@@ -2516,7 +2884,10 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
     kanban_note = None
     try:
         if last and last.get("kanban") and bool(_cfg("show_on_kanban", True)):
-            from . import kanban as _kb
+            try:
+                from . import kanban as _kb
+            except ImportError:  # top-level import outside the plugin package (tests)
+                import kanban as _kb  # type: ignore
 
             kanban_note = _kb.finish_rounds(last["kanban"], rounds_out, fighter_a, fighter_b, winner, report_path)
     except Exception as exc:
@@ -2905,6 +3276,8 @@ def kombat_recommend(args: dict, **kwargs) -> str:
 
 @_guard
 def kombat_history(args: dict, **kwargs) -> str:
+    if args.get("running"):
+        return _ok(**job_snapshot())
     try:
         limit = int(args.get("limit", 10))
     except (TypeError, ValueError):

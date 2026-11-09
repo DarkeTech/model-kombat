@@ -64,6 +64,17 @@ config_schema:
     type: float
     default: 180
     label: "Per-call timeout (seconds)"
+    description: "Hard per-call deadline. Calls run in a worker thread and are abandoned at the deadline, so a hung streamed response never blocks the fight (it counts as an errored attempt and is retried once)."
+  max_fight_seconds:
+    type: int
+    default: 360
+    label: "Whole-fight wall-clock cap (seconds)"
+    description: "After this many seconds the remaining (task, fighter) pairs are marked skipped with 'fight time cap' and the fight returns a partial result (time_cap_hit). Kept under the host's ~420s tool timeout; use background:true or a task subset for longer cards."
+  stale_card_minutes:
+    type: int
+    default: 30
+    label: "Stale scoreboard card age (minutes)"
+    description: "At the start of every fight, open FIGHT/REMATCH/R1–R3 scoreboard cards older than this (and not part of a live bout) are commented 'Stale — closed by Model Kombat' and completed/archived."
   pace_ms:
     type: int
     default: 0
