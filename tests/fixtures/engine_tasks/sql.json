@@ -1,0 +1,89 @@
+{
+  "lane": "sql",
+  "tasks": [
+    {
+      "id": "fx-sql-001",
+      "lane": "sql",
+      "difficulty": 1,
+      "title": "sql fixture 1 (d1)",
+      "prompt": "Fixture prompt for sql difficulty 1.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-sql-002",
+      "lane": "sql",
+      "difficulty": 1,
+      "title": "sql fixture 2 (d1)",
+      "prompt": "Fixture prompt for sql difficulty 1.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-sql-003",
+      "lane": "sql",
+      "difficulty": 2,
+      "title": "sql fixture 3 (d2)",
+      "prompt": "Fixture prompt for sql difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-sql-004",
+      "lane": "sql",
+      "difficulty": 2,
+      "title": "sql fixture 4 (d2)",
+      "prompt": "Fixture prompt for sql difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-sql-005",
+      "lane": "sql",
+      "difficulty": 2,
+      "title": "sql fixture 5 (d2)",
+      "prompt": "Fixture prompt for sql difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-sql-006",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "sql fixture 6 (d3)",
+      "prompt": "Fixture prompt for sql difficulty 3.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-sql-007",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "sql fixture 7 (d3)",
+      "prompt": "Fixture prompt for sql difficulty 3.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    }
+  ]
+}

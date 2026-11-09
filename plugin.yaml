@@ -1,6 +1,6 @@
 name: model-kombat
-version: 0.3.0
-description: "Model Kombat — pit two Hermes models against each other in 3 escalating rounds (Warm-up, Main Event, Championship + sudden death), scored mechanically (executed code, exact counts, synonym-aware facts), with a live kanban scoreboard and optional agentic worker fights. Choose your fighter."
+version: 0.4.0
+description: "Model Kombat — pit two Hermes models against each other on an adaptive lane card (Warm-up, Main Event, Championship + sudden death) or the fixed suite, scored mechanically (executed code, exact counts, synonym-aware facts, SQL rows), with a local lane scout, live kanban scoreboard and optional agentic worker fights. Choose your fighter."
 author: DarkeTech
 kind: standalone
 requires_hermes: ">=0.23.0"
@@ -8,6 +8,7 @@ capabilities:
   - llm.model_override
 provides_tools:
   - kombat_list_tasks
+  - kombat_scout
   - kombat_run_fight
   - kombat_run_agentic_fight
   - kombat_score_answers

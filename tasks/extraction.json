@@ -1,0 +1,119 @@
+{
+  "lane": "extraction",
+  "tasks": [
+    {
+      "id": "extraction-001",
+      "lane": "extraction",
+      "difficulty": 1,
+      "title": "Extract person info",
+      "prompt": "From the passage below, extract the person's name, age, and city. Return a JSON object with fields \"name\" (string), \"age\" (integer), and \"city\" (string).\n\nPassage:\n\"Alice Smith is 30 years old and lives in New York.\"\n\nReturn only the JSON object.",
+      "check": {
+        "type": "json_fields",
+        "expected": {
+          "name": "Alice Smith",
+          "age": 30,
+          "city": "New York"
+        },
+        "tol": 0
+      },
+      "reference": "{\"name\": \"Alice Smith\", \"age\": 30, \"city\": \"New York\"}"
+    },
+    {
+      "id": "extraction-002",
+      "lane": "extraction",
+      "difficulty": 1,
+      "title": "Extract book details",
+      "prompt": "From the passage below, extract the book title, author, and year published. Return a JSON object with fields \"title\" (string), \"author\" (string), \"year\" (integer).\n\nPassage:\n\"The novel \"1984\" was written by George Orwell and published in 1949.\"\n\nReturn only the JSON object.",
+      "check": {
+        "type": "json_fields",
+        "expected": {
+          "title": "1984",
+          "author": "George Orwell",
+          "year": 1949
+        },
+        "tol": 0
+      },
+      "reference": "{\"title\": \"1984\", \"author\": \"George Orwell\", \"year\": 1949}"
+    },
+    {
+      "id": "extraction-003",
+      "lane": "extraction",
+      "difficulty": 2,
+      "title": "Extract product info with price",
+      "prompt": "From the passage below, extract the product name, price (in USD), and availability. Return a JSON object with fields \"name\" (string), \"price\" (number), \"available\" (boolean).\n\nPassage:\n\"The Widget Pro costs $19.99 and is currently in stock.\"\n\nReturn only the JSON object.",
+      "check": {
+        "type": "json_fields",
+        "expected": {
+          "name": "Widget Pro",
+          "price": 19.99,
+          "available": true
+        },
+        "tol": 0.01
+      },
+      "reference": "{\"name\": \"Widget Pro\", \"price\": 19.99, \"available\": true}"
+    },
+    {
+      "id": "extraction-004",
+      "lane": "extraction",
+      "difficulty": 2,
+      "title": "Extract meeting details",
+      "prompt": "From the passage below, extract the meeting date, start time, and end time. Return a JSON object with fields \"date\" (string in YYYY-MM-DD), \"start\" (string in HH:MM), \"end\" (string in HH:MM).\n\nPassage:\n\"The team meeting is scheduled for 2026-04-15 from 09:30 to 11:00.\"\n\nReturn only the JSON object.",
+      "check": {
+        "type": "json_fields",
+        "expected": {
+          "date": "2026-04-15",
+          "start": "09:30",
+          "end": "11:00"
+        },
+        "tol": 0
+      },
+      "reference": "{\"date\": \"2026-04-15\", \"start\": \"09:30\", \"end\": \"11:00\"}"
+    },
+    {
+      "id": "extraction-005",
+      "lane": "extraction",
+      "difficulty": 3,
+      "title": "Extract multiple persons",
+      "prompt": "From the passage below, extract all persons mentioned and their roles. Return a JSON object with a field \"persons\" that is a list of objects, each with \"name\" (string) and \"role\" (string).\n\nPassage:\n\"Dr. Alice Chen (cardiologist) and Engineer Bob Lewis (software) attended the conference.\"\n\nReturn only the JSON object.",
+      "check": {
+        "type": "json_fields",
+        "expected": {
+          "persons": [
+            {
+              "name": "Alice Chen",
+              "role": "cardiologist"
+            },
+            {
+              "name": "Bob Lewis",
+              "role": "software"
+            }
+          ]
+        },
+        "tol": 0
+      },
+      "reference": "{\"persons\": [{\"name\": \"Alice Chen\", \"role\": \"cardiologist\"}, {\"name\": \"Bob Lewis\", \"role\": \"software\"}]}"
+    },
+    {
+      "id": "extraction-006",
+      "lane": "extraction",
+      "difficulty": 3,
+      "title": "Extract order with items and total",
+      "prompt": "From the passage below, extract the customer name, order date, list of items, and total amount. Return a JSON object with fields \"customer\" (string), \"date\" (string YYYY-MM-DD), \"items\" (list of strings), \"total\" (number).\n\nPassage:\n\"Customer John Doe placed an order on 2026-05-01 for items: apple, banana, orange. The total was $12.50.\"\n\nReturn only the JSON object.",
+      "check": {
+        "type": "json_fields",
+        "expected": {
+          "customer": "John Doe",
+          "date": "2026-05-01",
+          "items": [
+            "apple",
+            "banana",
+            "orange"
+          ],
+          "total": 12.5
+        },
+        "tol": 0.01
+      },
+      "reference": "{\"customer\": \"John Doe\", \"date\": \"2026-05-01\", \"items\": [\"apple\", \"banana\", \"orange\"], \"total\": 12.5}"
+    }
+  ]
+}

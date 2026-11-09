@@ -10,6 +10,41 @@ KOMBAT_LIST_TASKS = {
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
+KOMBAT_SCOUT = {
+    "name": "kombat_scout",
+    "description": (
+        "Adaptive scout: classify a task's text into Model Kombat lanes and build a "
+        "deterministic fight card (Warm-up 1pt, Main Event 2pt, Championship 3pt, sudden "
+        "death) from those lanes. Pass free text, or {\"card\": \"<kanban task id>\"} to "
+        "scout a kanban card, or {\"board\": true} for all open cards on the active board. "
+        "Classification is local keyword/regex rules — no LLM call. Use before "
+        "kombat_run_fight to tailor the fight to real work; identical input + seed always "
+        "yields the identical card."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "input": {
+                "type": "string",
+                "description": "Free text describing the task (prompt, card title + body, etc.).",
+            },
+            "card": {
+                "type": "string",
+                "description": "Kanban task id to scout (reads it with `hermes kanban show --json`).",
+            },
+            "board": {
+                "type": "boolean",
+                "description": "Scout every open card on the active kanban board.",
+            },
+            "seed": {
+                "type": "integer",
+                "description": "Optional card seed. Default derives from the input text, so the same input gives the same card.",
+            },
+        },
+        "required": [],
+    },
+}
+
 KOMBAT_RUN_FIGHT = {
     "name": "kombat_run_fight",
     "description": (

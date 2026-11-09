@@ -1,0 +1,190 @@
+{
+  "lane": "sql",
+  "tasks": [
+    {
+      "id": "sql-001",
+      "lane": "sql",
+      "difficulty": 1,
+      "title": "Select all students",
+      "prompt": "Given a table `students` with columns `id` (integer), `name` (text), `age` (integer), write a SQL query to retrieve all columns for all students.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE students (id INTEGER, name TEXT, age INTEGER);",
+          "INSERT INTO students VALUES (1, 'Alice', 20);",
+          "INSERT INTO students VALUES (2, 'Bob', 22);",
+          "INSERT INTO students VALUES (3, 'Charlie', 19);"
+        ],
+        "expect_rows": [
+          [
+            1,
+            "Alice",
+            20
+          ],
+          [
+            2,
+            "Bob",
+            22
+          ],
+          [
+            3,
+            "Charlie",
+            19
+          ]
+        ],
+        "ordered": false
+      },
+      "reference": "SELECT * FROM students;"
+    },
+    {
+      "id": "sql-002",
+      "lane": "sql",
+      "difficulty": 1,
+      "title": "Select names and ages",
+      "prompt": "Given a table `employees` with columns `id` (integer), `name` (text), `salary` (real), write a SQL query to retrieve the name and salary of each employee.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE employees (id INTEGER, name TEXT, salary REAL);",
+          "INSERT INTO employees VALUES (1, 'Alice', 50000);",
+          "INSERT INTO employees VALUES (2, 'Bob', 55000);"
+        ],
+        "expect_rows": [
+          [
+            "Alice",
+            50000
+          ],
+          [
+            "Bob",
+            55000
+          ]
+        ],
+        "ordered": false
+      },
+      "reference": "SELECT name, salary FROM employees;"
+    },
+    {
+      "id": "sql-003",
+      "lane": "sql",
+      "difficulty": 2,
+      "title": "Select students older than 20",
+      "prompt": "Given a table `students` with columns `id` (integer), `name` (text), `age` (integer), write a SQL query to retrieve the names of students older than 20.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE students (id INTEGER, name TEXT, age INTEGER);",
+          "INSERT INTO students VALUES (1, 'Alice', 20);",
+          "INSERT INTO students VALUES (2, 'Bob', 22);",
+          "INSERT INTO students VALUES (3, 'Charlie', 19);"
+        ],
+        "expect_rows": [
+          [
+            "Bob"
+          ]
+        ],
+        "ordered": false
+      },
+      "reference": "SELECT name FROM students WHERE age > 20;"
+    },
+    {
+      "id": "sql-004",
+      "lane": "sql",
+      "difficulty": 2,
+      "title": "Order students by age descending",
+      "prompt": "Given a table `students` with columns `id` (integer), `name` (text), `age` (integer), write a SQL query to retrieve all columns ordered by age descending.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE students (id INTEGER, name TEXT, age INTEGER);",
+          "INSERT INTO students VALUES (1, 'Alice', 20);",
+          "INSERT INTO students VALUES (2, 'Bob', 22);",
+          "INSERT INTO students VALUES (3, 'Charlie', 19);"
+        ],
+        "expect_rows": [
+          [
+            2,
+            "Bob",
+            22
+          ],
+          [
+            1,
+            "Alice",
+            20
+          ],
+          [
+            3,
+            "Charlie",
+            19
+          ]
+        ],
+        "ordered": false
+      },
+      "reference": "SELECT * FROM students ORDER BY age DESC;"
+    },
+    {
+      "id": "sql-005",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "Count students per grade",
+      "prompt": "Given a table `students` with columns `id` (integer), `name` (text), `grade` (integer), write a SQL query to retrieve each grade and the number of students in that grade.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE students (id INTEGER, name TEXT, grade INTEGER);",
+          "INSERT INTO students VALUES (1, 'Alice', 9);",
+          "INSERT INTO students VALUES (2, 'Bob', 9);",
+          "INSERT INTO students VALUES (3, 'Charlie', 10);",
+          "INSERT INTO students VALUES (4, 'David', 10);",
+          "INSERT INTO students VALUES (5, 'Eve', 10);"
+        ],
+        "expect_rows": [
+          [
+            9,
+            2
+          ],
+          [
+            10,
+            3
+          ]
+        ],
+        "ordered": false
+      },
+      "reference": "SELECT grade, COUNT(*) FROM students GROUP BY grade;"
+    },
+    {
+      "id": "sql-006",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "Join students and courses",
+      "prompt": "Given two tables: `students` (id INTEGER, name TEXT) and `enrollments` (student_id INTEGER, course TEXT). Write a SQL query to retrieve the student name and course for each enrollment.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE students (id INTEGER, name TEXT);",
+          "CREATE TABLE enrollments (student_id INTEGER, course TEXT);",
+          "INSERT INTO students VALUES (1, 'Alice');",
+          "INSERT INTO students VALUES (2, 'Bob');",
+          "INSERT INTO enrollments VALUES (1, 'Math');",
+          "INSERT INTO enrollments VALUES (1, 'Science');",
+          "INSERT INTO enrollments VALUES (2, 'History');"
+        ],
+        "expect_rows": [
+          [
+            "Alice",
+            "Math"
+          ],
+          [
+            "Alice",
+            "Science"
+          ],
+          [
+            "Bob",
+            "History"
+          ]
+        ],
+        "ordered": false
+      },
+      "reference": "SELECT students.name, enrollments.course FROM students JOIN enrollments ON students.id = enrollments.student_id;"
+    }
+  ]
+}

@@ -1,0 +1,381 @@
+{
+  "lane": "debugging",
+  "tasks": [
+    {
+      "id": "debugging-001",
+      "lane": "debugging",
+      "difficulty": 1,
+      "title": "Fix max of two numbers",
+      "prompt": "The following Python function is supposed to return the maximum of two numbers, but contains a bug. Find the bug and give a corrected version.\n\n```python\ndef max_two(a, b):\n    if a < b:\n        return a\n    else:\n        return b\n```\n\nExplain in 1-2 sentences what the bug is, then give the corrected code as a single python code block defining max_two.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "max_two",
+        "cases": [
+          {
+            "args": [
+              5,
+              10
+            ],
+            "expect": 10
+          },
+          {
+            "args": [
+              10,
+              5
+            ],
+            "expect": 10
+          },
+          {
+            "args": [
+              -3,
+              -3
+            ],
+            "expect": -3
+          },
+          {
+            "args": [
+              0,
+              0
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              "x",
+              1
+            ],
+            "raises": "TypeError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def max_two(a, b):\n    if a > b:\n        return a\n    else:\n        return b"
+    },
+    {
+      "id": "debugging-002",
+      "lane": "debugging",
+      "difficulty": 1,
+      "title": "Fix is_even off-by-one",
+      "prompt": "The following Python function is supposed to return True if the integer n is even, but contains a bug. Find the bug and give a corrected version.\n\n```python\ndef is_even(n):\n    return n % 2 == 1\n```\n\nExplain in 1-2 sentences what the bug is, then give the corrected code as a single python code block defining is_even.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "is_even",
+        "cases": [
+          {
+            "args": [
+              2
+            ],
+            "expect": true
+          },
+          {
+            "args": [
+              3
+            ],
+            "expect": false
+          },
+          {
+            "args": [
+              0
+            ],
+            "expect": true
+          },
+          {
+            "args": [
+              -2
+            ],
+            "expect": true
+          },
+          {
+            "args": [
+              -3
+            ],
+            "expect": false
+          },
+          {
+            "args": [
+              "x"
+            ],
+            "raises": "TypeError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def is_even(n):\n    return n % 2 == 0"
+    },
+    {
+      "id": "debugging-003",
+      "lane": "debugging",
+      "difficulty": 2,
+      "title": "Fix factorial loop bound",
+      "prompt": "The following Python function is supposed to return the factorial of n (n!), but contains a bug. Find the bug and give a corrected version.\n\n```python\ndef factorial(n):\n    if n < 0:\n        raise ValueError\n    result = 1\n    for i in range(1, n):\n        result *= i\n    return result\n```\n\nExplain in 1-2 sentences what the bug is, then give the corrected code as a single python code block defining factorial.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "factorial",
+        "cases": [
+          {
+            "args": [
+              0
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              1
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              5
+            ],
+            "expect": 120
+          },
+          {
+            "args": [
+              3
+            ],
+            "expect": 6
+          },
+          {
+            "args": [
+              -1
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def factorial(n):\n    if n < 0:\n        raise ValueError(\"n must be >= 0\")\n    result = 1\n    for i in range(2, n+1):\n        result *= i\n    return result"
+    },
+    {
+      "id": "debugging-004",
+      "lane": "debugging",
+      "difficulty": 2,
+      "title": "Fix Fibonacci off-by-one",
+      "prompt": "The following Python function is supposed to return the nth Fibonacci number (fib(0)=0, fib(1)=1), but contains a bug. Find the bug and give a corrected version.\n\n```python\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n+1):\n        a, b = b, a + b\n    return a\n```\n\nExplain in 1-2 sentences what the bug is, then give the corrected code as a single python code block defining fib.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "fib",
+        "cases": [
+          {
+            "args": [
+              0
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              1
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              2
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              3
+            ],
+            "expect": 2
+          },
+          {
+            "args": [
+              4
+            ],
+            "expect": 3
+          },
+          {
+            "args": [
+              5
+            ],
+            "expect": 5
+          },
+          {
+            "args": [
+              6
+            ],
+            "expect": 8
+          },
+          {
+            "args": [
+              -1
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def fib(n):\n    if n < 0:\n        raise ValueError(\"n must be >= 0\")\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a"
+    },
+    {
+      "id": "debugging-005",
+      "lane": "debugging",
+      "difficulty": 3,
+      "title": "Fix merge sorted lists (handles descending?)",
+      "prompt": "The following Python function is supposed to merge two sorted lists of integers (ascending) into a new sorted list, but contains a bug. Find the bug and give a corrected version.\n\n```python\ndef merge_sorted(a, b):\n    i = j = 0\n    result = []\n    while i < len(a) and j < len(b):\n        if a[i] < b[j]:\n            result.append(a[i])\n            i += 1\n        else:\n            result.append(b[j])\n            j += 1\n    result.extend(a[i:])\n    result.extend(b[j:])\n    return result\n```\n\nExplain in 1-2 sentences what the bug is, then give the corrected code as a single python code block defining merge_sorted.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "merge_sorted",
+        "cases": [
+          {
+            "args": [
+              [
+                1,
+                3,
+                5
+              ],
+              [
+                2,
+                4,
+                6
+              ]
+            ],
+            "expect": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "args": [
+              [],
+              [
+                1,
+                2
+              ]
+            ],
+            "expect": [
+              1,
+              2
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3
+              ],
+              []
+            ],
+            "expect": [
+              1,
+              2,
+              3
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                1,
+                2
+              ],
+              [
+                1,
+                3,
+                4
+              ]
+            ],
+            "expect": [
+              1,
+              1,
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          {
+            "args": [
+              [],
+              []
+            ],
+            "expect": []
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def merge_sorted(a, b):\n    i = j = 0\n    result = []\n    while i < len(a) and j < len(b):\n        if a[i] <= b[j]:\n            result.append(a[i])\n            i += 1\n        else:\n            result.append(b[j])\n            j += 1\n    result.extend(a[i:])\n    result.extend(b[j:])\n    return result"
+    },
+    {
+      "id": "debugging-006",
+      "lane": "debugging",
+      "difficulty": 3,
+      "title": "Fix binary search (returns any occurrence, not first)",
+      "prompt": "The following Python function is supposed to return the index of the first occurrence of target in sorted list arr, or -1 if not present, but contains a bug. Find the bug and give a corrected version.\n\n```python\ndef binary_search(arr, target):\n    lo, hi = 0, len(arr) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1\n```\n\nExplain in 1-2 sentences what the bug is, then give the corrected code as a single python code block defining binary_search.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "binary_search",
+        "cases": [
+          {
+            "args": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              3
+            ],
+            "expect": 2
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                2,
+                2,
+                3
+              ],
+              2
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              [],
+              5
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              6
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              [
+                1,
+                1,
+                1,
+                1
+              ],
+              1
+            ],
+            "expect": 0
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def binary_search(arr, target):\n    lo, hi = 0, len(arr) - 1\n    result = -1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            result = mid\n            hi = mid - 1  # continue left\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return result"
+    }
+  ]
+}

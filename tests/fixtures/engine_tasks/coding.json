@@ -1,0 +1,89 @@
+{
+  "lane": "coding",
+  "tasks": [
+    {
+      "id": "fx-coding-001",
+      "lane": "coding",
+      "difficulty": 1,
+      "title": "coding fixture 1 (d1)",
+      "prompt": "Fixture prompt for coding difficulty 1.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-coding-002",
+      "lane": "coding",
+      "difficulty": 1,
+      "title": "coding fixture 2 (d1)",
+      "prompt": "Fixture prompt for coding difficulty 1.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-coding-003",
+      "lane": "coding",
+      "difficulty": 2,
+      "title": "coding fixture 3 (d2)",
+      "prompt": "Fixture prompt for coding difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-coding-004",
+      "lane": "coding",
+      "difficulty": 2,
+      "title": "coding fixture 4 (d2)",
+      "prompt": "Fixture prompt for coding difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-coding-005",
+      "lane": "coding",
+      "difficulty": 2,
+      "title": "coding fixture 5 (d2)",
+      "prompt": "Fixture prompt for coding difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-coding-006",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "coding fixture 6 (d3)",
+      "prompt": "Fixture prompt for coding difficulty 3.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-coding-007",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "coding fixture 7 (d3)",
+      "prompt": "Fixture prompt for coding difficulty 3.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    }
+  ]
+}

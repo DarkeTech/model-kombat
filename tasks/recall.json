@@ -1,0 +1,135 @@
+{
+  "lane": "recall",
+  "tasks": [
+    {
+      "id": "recall-001",
+      "lane": "recall",
+      "difficulty": 1,
+      "title": "Recall color",
+      "prompt": "Read the short sentence and answer the question.\n\nSentence: \"The sky is blue.\"\n\nQuestion: What color is the sky?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "blue"
+          ]
+        ]
+      },
+      "reference": "blue"
+    },
+    {
+      "id": "recall-002",
+      "lane": "recall",
+      "difficulty": 1,
+      "title": "Recall shape synonyms",
+      "prompt": "Read the sentence and answer the question.\n\nSentence: \"The table is round.\"\n\nQuestion: What shape is the table?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "round",
+            "circular"
+          ]
+        ]
+      },
+      "reference": "round"
+    },
+    {
+      "id": "recall-003",
+      "lane": "recall",
+      "difficulty": 2,
+      "title": "Recall multiple details",
+      "prompt": "Read the passage and answer only from it.\n\n---\nThe library opens at 9 AM on weekdays. On Saturdays it opens at 10 AM and closes at 4 PM. On Sundays it is closed.\n---\n\nAnswer: (1) What time does the library open on weekdays? (2) What time does it close on Saturdays? (3) Is the library open on Sundays?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "9 AM",
+            "nine AM",
+            "09:00"
+          ],
+          [
+            "4 PM",
+            "four PM",
+            "16:00"
+          ],
+          [
+            "no",
+            "not",
+            "closed"
+          ]
+        ]
+      },
+      "reference": "9 AM, 4 PM, no"
+    },
+    {
+      "id": "recall-004",
+      "lane": "recall",
+      "difficulty": 2,
+      "title": "Recall date and event",
+      "prompt": "Read the passage and answer the question.\n\n---\nOn May 5, 2026, the company launched a new product called \"Phoenix\". The launch event was held in San Francisco.\n---\n\nQuestion: What was the name of the product launched on May 5, 2026?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "Phoenix"
+          ]
+        ]
+      },
+      "reference": "Phoenix"
+    },
+    {
+      "id": "recall-005",
+      "lane": "recall",
+      "difficulty": 3,
+      "title": "Recall multiple with synonyms",
+      "prompt": "Read the passage and answer only from it.\n\n---\nThe experiment started at 08:00 and ended at 18:00. The temperature was maintained at 25 degrees Celsius throughout.\n---\n\nAnswer: (1) What time did the experiment start? (2) What time did it end? (3) What was the temperature?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "08:00",
+            "8 AM",
+            "eight AM"
+          ],
+          [
+            "18:00",
+            "6 PM",
+            "six PM"
+          ],
+          [
+            "25 degrees Celsius",
+            "25C",
+            "twenty-five degrees"
+          ]
+        ]
+      },
+      "reference": "08:00, 18:00, 25 degrees Celsius"
+    },
+    {
+      "id": "recall-006",
+      "lane": "recall",
+      "difficulty": 3,
+      "title": "Recall details from news",
+      "prompt": "Read the passage and answer only from it.\n\n---\nThe city council meeting on June 10, 2026 lasted two hours. Council member Jane Doe presented the budget proposal. The proposal included a $500,000 grant for the park renovation.\n---\n\nAnswer: (1) On what date did the city council meeting occur? (2) Who presented the budget proposal? (3) What was the amount of the grant for park renovation?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "June 10, 2026",
+            "10/06/2026"
+          ],
+          [
+            "Jane Doe"
+          ],
+          [
+            "$500,000",
+            "500000",
+            "half a million dollars"
+          ]
+        ]
+      },
+      "reference": "June 10, 2026, Jane Doe, $500,000"
+    }
+  ]
+}

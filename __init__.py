@@ -1,7 +1,7 @@
 """Model Kombat plugin — registration.
 
 Pit two Hermes models against each other on the same task set and score the
-fight deterministically. Tools: kombat_list_tasks, kombat_run_fight,
+fight deterministically. Tools: kombat_list_tasks, kombat_scout, kombat_run_fight,
 kombat_run_agentic_fight, kombat_score_answers, kombat_history, kombat_export.
 Slash command: /kombat (fights run in the background; check /kombat status).
 """
@@ -161,6 +161,12 @@ def register(ctx):
         handler=tools.kombat_run_fight,
     )
     ctx.register_tool(
+        name="kombat_scout",
+        toolset="model_kombat",
+        schema=schemas.KOMBAT_SCOUT,
+        handler=tools.kombat_scout,
+    )
+    ctx.register_tool(
         name="kombat_run_agentic_fight",
         toolset="model_kombat",
         schema=schemas.KOMBAT_RUN_AGENTIC_FIGHT,
@@ -205,4 +211,4 @@ def register(ctx):
             if child.is_dir() and skill_md.exists():
                 ctx.register_skill(child.name, skill_md)
 
-    logger.debug("Model Kombat registered: 6 tools, /kombat command, bundled skill")
+    logger.debug("Model Kombat registered: 7 tools, /kombat command, bundled skill")

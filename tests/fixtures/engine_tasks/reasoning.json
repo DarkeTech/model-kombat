@@ -1,0 +1,89 @@
+{
+  "lane": "reasoning",
+  "tasks": [
+    {
+      "id": "fx-reasoning-001",
+      "lane": "reasoning",
+      "difficulty": 1,
+      "title": "reasoning fixture 1 (d1)",
+      "prompt": "Fixture prompt for reasoning difficulty 1.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-reasoning-002",
+      "lane": "reasoning",
+      "difficulty": 1,
+      "title": "reasoning fixture 2 (d1)",
+      "prompt": "Fixture prompt for reasoning difficulty 1.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-reasoning-003",
+      "lane": "reasoning",
+      "difficulty": 2,
+      "title": "reasoning fixture 3 (d2)",
+      "prompt": "Fixture prompt for reasoning difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-reasoning-004",
+      "lane": "reasoning",
+      "difficulty": 2,
+      "title": "reasoning fixture 4 (d2)",
+      "prompt": "Fixture prompt for reasoning difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-reasoning-005",
+      "lane": "reasoning",
+      "difficulty": 2,
+      "title": "reasoning fixture 5 (d2)",
+      "prompt": "Fixture prompt for reasoning difficulty 2.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-reasoning-006",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "reasoning fixture 6 (d3)",
+      "prompt": "Fixture prompt for reasoning difficulty 3.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    },
+    {
+      "id": "fx-reasoning-007",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "reasoning fixture 7 (d3)",
+      "prompt": "Fixture prompt for reasoning difficulty 3.",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "rounds": [
+    {
+      "id": "R1",
+      "name": "Warm-up",
+      "points": 1,
+      "tasks": [
+        "T1",
+        "T4"
+      ]
+    },
+    {
+      "id": "R2",
+      "name": "Main Event",
+      "points": 2,
+      "tasks": [
+        "T3",
+        "T5",
+        "T2"
+      ]
+    },
+    {
+      "id": "R3",
+      "name": "Championship",
+      "points": 3,
+      "tasks": [
+        "T6",
+        "T7"
+      ]
+    }
+  ],
+  "sudden_death_task": "T8",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "T1",
+      "scorer": "money",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T4",
+      "title": "T4",
+      "scorer": "format25",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T3",
+      "title": "T3",
+      "scorer": "recall",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T5",
+      "title": "T5",
+      "scorer": "summary50",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T2",
+      "title": "T2",
+      "scorer": "debug_exec",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T6",
+      "title": "T6",
+      "scorer": "code_exec",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T7",
+      "title": "T7",
+      "scorer": "code_exec",
+      "prompt": "legacy fixture"
+    },
+    {
+      "id": "T8",
+      "title": "T8",
+      "scorer": "code_exec",
+      "prompt": "legacy fixture"
+    }
+  ]
+}

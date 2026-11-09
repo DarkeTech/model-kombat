@@ -1,0 +1,376 @@
+{
+  "lane": "coding",
+  "tasks": [
+    {
+      "id": "coding-001",
+      "lane": "coding",
+      "difficulty": 1,
+      "title": "Absolute value without built-in",
+      "prompt": "Write a Python function `abs_val(x: int) -> int` that returns the absolute value of the integer x. Do not use the built-in abs function. Handle only integer inputs; you may assume x is int.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "abs_val",
+        "cases": [
+          {
+            "args": [
+              -10
+            ],
+            "expect": 10
+          },
+          {
+            "args": [
+              0
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              5
+            ],
+            "expect": 5
+          },
+          {
+            "args": [
+              -1
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              "x"
+            ],
+            "raises": "TypeError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def abs_val(x: int) -> int:\n    if x < 0:\n        return -x\n    else:\n        return x"
+    },
+    {
+      "id": "coding-002",
+      "lane": "coding",
+      "difficulty": 1,
+      "title": "Even check",
+      "prompt": "Write a Python function `is_even(n: int) -> bool` that returns True if n is even, False otherwise. Assume n is integer.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "is_even",
+        "cases": [
+          {
+            "args": [
+              2
+            ],
+            "expect": true
+          },
+          {
+            "args": [
+              3
+            ],
+            "expect": false
+          },
+          {
+            "args": [
+              0
+            ],
+            "expect": true
+          },
+          {
+            "args": [
+              -2
+            ],
+            "expect": true
+          },
+          {
+            "args": [
+              -3
+            ],
+            "expect": false
+          },
+          {
+            "args": [
+              "x"
+            ],
+            "raises": "TypeError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def is_even(n: int) -> bool:\n    return n % 2 == 0"
+    },
+    {
+      "id": "coding-003",
+      "lane": "coding",
+      "difficulty": 2,
+      "title": "Factorial",
+      "prompt": "Write a Python function `factorial(n: int) -> int` that returns the factorial of n (n!). Assume n >= 0. Raise ValueError if n < 0.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "factorial",
+        "cases": [
+          {
+            "args": [
+              0
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              1
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              5
+            ],
+            "expect": 120
+          },
+          {
+            "args": [
+              3
+            ],
+            "expect": 6
+          },
+          {
+            "args": [
+              -1
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def factorial(n: int) -> int:\n    if n < 0:\n        raise ValueError(\"n must be >= 0\")\n    result = 1\n    for i in range(2, n+1):\n        result *= i\n    return result"
+    },
+    {
+      "id": "coding-004",
+      "lane": "coding",
+      "difficulty": 2,
+      "title": "Fibonacci number",
+      "prompt": "Write a Python function `fib(n: int) -> int` that returns the nth Fibonacci number where fib(0)=0, fib(1)=1. Assume n >= 0.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "fib",
+        "cases": [
+          {
+            "args": [
+              0
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              1
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              2
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              3
+            ],
+            "expect": 2
+          },
+          {
+            "args": [
+              4
+            ],
+            "expect": 3
+          },
+          {
+            "args": [
+              5
+            ],
+            "expect": 5
+          },
+          {
+            "args": [
+              6
+            ],
+            "expect": 8
+          },
+          {
+            "args": [
+              -1
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def fib(n: int) -> int:\n    if n < 0:\n        raise ValueError(\"n must be >= 0\")\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a"
+    },
+    {
+      "id": "coding-005",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "Merge two sorted lists",
+      "prompt": "Write a Python function `merge_sorted(a: list[int], b: list[int]) -> list[int]` that merges two sorted lists of integers into a new sorted list. Do not modify inputs. Assume a and b are sorted in ascending order.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "merge_sorted",
+        "cases": [
+          {
+            "args": [
+              [
+                1,
+                3,
+                5
+              ],
+              [
+                2,
+                4,
+                6
+              ]
+            ],
+            "expect": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "args": [
+              [],
+              [
+                1,
+                2
+              ]
+            ],
+            "expect": [
+              1,
+              2
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3
+              ],
+              []
+            ],
+            "expect": [
+              1,
+              2,
+              3
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                1,
+                2
+              ],
+              [
+                1,
+                3,
+                4
+              ]
+            ],
+            "expect": [
+              1,
+              1,
+              1,
+              2,
+              3,
+              4
+            ]
+          },
+          {
+            "args": [
+              [],
+              []
+            ],
+            "expect": []
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def merge_sorted(a: list[int], b: list[int]) -> list[int]:\n    i = j = 0\n    result = []\n    while i < len(a) and j < len(b):\n        if a[i] <= b[j]:\n            result.append(a[i])\n            i += 1\n        else:\n            result.append(b[j])\n            j += 1\n    result.extend(a[i:])\n    result.extend(b[j:])\n    return result"
+    },
+    {
+      "id": "coding-006",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "Binary search first occurrence",
+      "prompt": "Write a Python function `binary_search(arr: list[int], target: int) -> int` that returns the index of the first occurrence of target in sorted list arr, or -1 if not present. Assume arr is sorted in ascending order.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "binary_search",
+        "cases": [
+          {
+            "args": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              3
+            ],
+            "expect": 2
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                2,
+                2,
+                3
+              ],
+              2
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              [],
+              5
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              6
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              [
+                1,
+                1,
+                1,
+                1
+              ],
+              1
+            ],
+            "expect": 0
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def binary_search(arr: list[int], target: int) -> int:\n    lo, hi = 0, len(arr) - 1\n    result = -1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            result = mid\n            hi = mid - 1  # continue left\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return result"
+    }
+  ]
+}

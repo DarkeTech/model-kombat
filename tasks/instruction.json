@@ -1,0 +1,141 @@
+{
+  "lane": "instruction",
+  "tasks": [
+    {
+      "id": "instruction-001",
+      "lane": "instruction",
+      "difficulty": 1,
+      "title": "Exact format 3 sentences 20 words",
+      "prompt": "Write a product description for a solar lamp. Constraints:\n- Exactly 3 sentences\n- Exactly 20 words total\n- The first word must be \"Bright\"\n- Do not use the words: amazing, best, incredible, perfect\n- End with a period",
+      "check": {
+        "type": "constraints",
+        "sentences": 3,
+        "words": {
+          "min": 20,
+          "max": 20
+        },
+        "starts_with": "Bright",
+        "banned": [
+          "amazing",
+          "best",
+          "incredible",
+          "perfect"
+        ],
+        "ends_with": "."
+      },
+      "reference": "Bright solar lamp provides light at night. It charges during the day using sunlight. Easy to install and use."
+    },
+    {
+      "id": "instruction-002",
+      "lane": "instruction",
+      "difficulty": 1,
+      "title": "Two sentences 15 words",
+      "prompt": "Write a short announcement about a workshop. Constraints:\n- Exactly 2 sentences\n- Exactly 15 words total\n- Must start with \"Join us\"\n- Must end with an exclamation mark\n- Do not use the word \"free\"",
+      "check": {
+        "type": "constraints",
+        "sentences": 2,
+        "words": {
+          "min": 15,
+          "max": 15
+        },
+        "starts_with": "Join us",
+        "ends_with": "!",
+        "banned": [
+          "free"
+        ]
+      },
+      "reference": "Join us for the workshop tomorrow. Learn new skills and have fun!"
+    },
+    {
+      "id": "instruction-003",
+      "lane": "instruction",
+      "difficulty": 2,
+      "title": "Four sentences 30 words",
+      "prompt": "Write a paragraph about recycling. Constraints:\n- Exactly 4 sentences\n- Exactly 30 words total\n- The first word must be \"Recycling\"\n- Must end with a period\n- Do not use the words: waste, trash",
+      "check": {
+        "type": "constraints",
+        "sentences": 4,
+        "words": {
+          "min": 30,
+          "max": 30
+        },
+        "starts_with": "Recycling",
+        "ends_with": ".",
+        "banned": [
+          "waste",
+          "trash"
+        ]
+      },
+      "reference": "Recycling helps the environment. It reduces pollution. Everyone should participate. Let's start today."
+    },
+    {
+      "id": "instruction-004",
+      "lane": "instruction",
+      "difficulty": 2,
+      "title": "Three sentences 25 words with phrase",
+      "prompt": "Describe a weekend trip. Constraints:\n- Exactly 3 sentences\n- Exactly 25 words total\n- Must start with \"Last weekend\"\n- Must contain the phrase \"lake side\"\n- Must end with a period\n- Do not use the word \"boring\"",
+      "check": {
+        "type": "constraints",
+        "sentences": 3,
+        "words": {
+          "min": 25,
+          "max": 25
+        },
+        "starts_with": "Last weekend",
+        "ends_with": ".",
+        "banned": [
+          "boring"
+        ],
+        "contains": [
+          "lake side"
+        ]
+      },
+      "reference": "Last weekend we went to the lake side. We stayed in a cabin and fished. The weather was perfect."
+    },
+    {
+      "id": "instruction-005",
+      "lane": "instruction",
+      "difficulty": 3,
+      "title": "Five sentences 40 words",
+      "prompt": "Write a short story opening. Constraints:\n- Exactly 5 sentences\n- Exactly 40 words total\n- The first word must be \"Once\"\n- Must end with a period\n- Do not use the words: king, queen, castle, dragon",
+      "check": {
+        "type": "constraints",
+        "sentences": 5,
+        "words": {
+          "min": 40,
+          "max": 40
+        },
+        "starts_with": "Once",
+        "ends_with": ".",
+        "banned": [
+          "king",
+          "queen",
+          "castle",
+          "dragon"
+        ]
+      },
+      "reference": "Once a traveler entered a dark forest. He heard strange sounds. Suddenly a light appeared. He followed it bravely. He found a hidden treasure."
+    },
+    {
+      "id": "instruction-006",
+      "lane": "instruction",
+      "difficulty": 3,
+      "title": "Two sentences 20 words question",
+      "prompt": "Write a response to a friend's question. Constraints:\n- Exactly 2 sentences\n- Exactly 20 words total\n- Must start with \"I think\"\n- Must end with a question mark\n- Do not use the word \"yes\"",
+      "check": {
+        "type": "constraints",
+        "sentences": 2,
+        "words": {
+          "min": 20,
+          "max": 20
+        },
+        "starts_with": "I think",
+        "ends_with": "?",
+        "banned": [
+          "yes"
+        ]
+      },
+      "reference": "I think we should go to the park tomorrow. What do you want to do?"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+"""Model Kombat dashboard backend (artist-owned; SPEC §7).
+
+Read-only routes over the plugin data dir for the Desktop pane/page. Every
+route returns JSON and never raises: missing or corrupt files yield empty
+default objects. Data dir honours ``MODEL_KOMBAT_DATA_DIR`` (tests), then
+``HERMES_HOME`` (``$HERMES_HOME/plugin-data/model-kombat``), falling back to
+``~/.hermes/plugin-data/model-kombat`` (same as ``tools._data_dir``).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, Query
+
+router = APIRouter()
+
+
+def _data_dir() -> Path:
+    override = os.environ.get("MODEL_KOMBAT_DATA_DIR")
+    if override:
+        return Path(override)
+    home = os.environ.get("HERMES_HOME")
+    if home:
+        return Path(home) / "plugin-data" / "model-kombat"
+    return Path.home() / ".hermes" / "plugin-data" / "model-kombat"
+
+
+def _read_json(name: str):
+    """Return parsed JSON from ``name``, or None (missing/corrupt/non-dict)."""
+    try:
+        path = _data_dir() / name
+        if not path.is_file():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data
+    except Exception:
+        return None
+
+
+def _idle_live() -> dict:
+    return {
+        "status": "idle", "fight_id": None, "card": {"title": None, "lanes": []},
+        "fighters": {"a": {"id": None, "short": None}, "b": {"id": None, "short": None}},
+        "hp": {"a": 100, "b": 100}, "rounds": [], "sudden_death": None,
+        "winner": None, "ko": False, "points": {"a": 0, "b": 0},
+        "usage": {"a": {"cost_usd": 0, "tokens": 0, "latency_s": 0},
+                  "b": {"cost_usd": 0, "tokens": 0, "latency_s": 0}},
+        "report_path": None, "updated": None,
+    }
+
+
+@router.get("/live")
+def live():
+    try:
+        data = _read_json("live.json")
+        if isinstance(data, dict) and data:
+            return data
+        return _idle_live()
+    except Exception:
+        return _idle_live()
+
+
+@router.get("/ladder")
+def ladder():
+    try:
+        data = _read_json("ladder.json")
+        if isinstance(data, dict) and data:
+            return data
+        return {"updated": None, "lanes": {}}
+    except Exception:
+        return {"updated": None, "lanes": {}}
+
+
+@router.get("/history")
+def history(limit: int = 20):
+    try:
+        limit = max(1, min(200, int(limit)))
+    except (TypeError, ValueError):
+        limit = 20
+    try:
+        path = _data_dir() / "fights.jsonl"
+        if not path.is_file():
+            return []
+        records = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(rec, dict):
+                records.append(rec)
+        return records[-limit:]
+    except Exception:
+        return []
+
+
+@router.get("/recommendations")
+def recommendations():
+    try:
+        data = _read_json("recommendations.json")
+        if isinstance(data, dict):
+            return data
+        return {}
+    except Exception:
+        return {}
+
+
+@router.get("/health")
+def health():
+    try:
+        return {
+            "ok": True,
+            "plugin": "model-kombat",
+            "data_dir": str(_data_dir()),
+            "live_exists": (_data_dir() / "live.json").is_file(),
+        }
+    except Exception:
+        return {"ok": False, "plugin": "model-kombat", "data_dir": None, "live_exists": False}

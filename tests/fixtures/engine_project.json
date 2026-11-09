@@ -1,0 +1,17 @@
+{
+  "lane": "coding",
+  "tasks": [
+    {
+      "id": "proj-coding-001",
+      "lane": "coding",
+      "difficulty": 2,
+      "title": "project task",
+      "prompt": "project",
+      "check": {
+        "type": "exact",
+        "expected": "ok"
+      },
+      "reference": "ok"
+    }
+  ]
+}

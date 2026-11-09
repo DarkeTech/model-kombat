@@ -86,6 +86,19 @@ def _load_tasks() -> list[dict]:
     return [suite["tasks"][tid] for tid in suite["order"]]
 
 
+def score_check(check: dict, answer: str, allow_exec: bool = False) -> dict:
+    """v0.4 mechanical check-spec scorer (SPEC §3); delegates to engine_checks.
+
+    Kept here as the stable entry point for the fight engine so callers do not
+    need to know which module owns the implementation.
+    """
+    try:
+        from . import engine_checks as _ec
+    except ImportError:  # top-level import outside the plugin package (tests)
+        import engine_checks as _ec  # type: ignore
+    return _ec.score_check(check, answer, allow_exec)
+
+
 def _data_dir() -> Path:
     if _DATA_DIR_OVERRIDE is not None:
         return _DATA_DIR_OVERRIDE
@@ -147,6 +160,223 @@ def kombat_list_tasks(args: dict, **kwargs) -> str:
         )
     except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
+
+
+# ---------------------------------------------------------------- scout
+
+def _scout_json(text: str):
+    """Parse kanban CLI output: bare JSON, {'output': ...} or a JSON array."""
+    raw = str(text or "").strip()
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    match = re.search(r"\{.*\}", raw, re.S)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    match = re.search(r"\[.*\]", raw, re.S)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _scout_task_text(task: dict) -> str:
+    parts = []
+    for key in ("title", "description", "body", "summary", "details", "notes"):
+        value = task.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    labels = task.get("labels")
+    if isinstance(labels, list) and labels:
+        parts.append("labels: " + ", ".join(str(x) for x in labels))
+    return "\n".join(parts)
+
+
+def _scout_active_board(_kb) -> str | None:
+    """Resolve the current kanban board slug (None = let the CLI pick)."""
+    try:
+        ok, out = _kb._dispatch(_kb._cli("boards", "list", "--json"))
+        if not ok:
+            return None
+        data = _scout_json(out)
+        items = data if isinstance(data, list) else (data or {}).get("boards") if isinstance(data, dict) else None
+        for board in items or []:
+            if not isinstance(board, dict):
+                continue
+            if board.get("is_current") or board.get("current"):
+                slug = board.get("slug") or board.get("name")
+                return str(slug) if slug else None
+    except Exception:  # noqa: BLE001 — scouting degrades, never fails
+        return None
+    return None
+
+
+def _scout_kanban_task(task_id: str, board: str | None = None) -> tuple[dict | None, str | None]:
+    try:
+        try:
+            from . import kanban as _kb
+        except ImportError:
+            import kanban as _kb  # type: ignore
+        board = board or _scout_active_board(_kb)
+        prefix = ("--board", board) if board else ()
+        ok, out = _kb._dispatch(_kb._cli(*prefix, "show", task_id, "--json"))
+        if not ok:
+            return None, f"kanban unavailable: {str(out)[:200]}"
+        data = _kb._extract_json(out)
+        if not isinstance(data, dict):
+            return None, "kanban returned no JSON for that card"
+        task = data.get("task")
+        if not isinstance(task, dict):
+            task = data if "title" in data else None
+        if not task:
+            return None, f"kanban card {task_id!r} not found"
+        return task, None
+    except Exception as exc:  # noqa: BLE001 — degrade cleanly
+        return None, f"kanban unavailable: {type(exc).__name__}: {exc}"
+
+
+def _scout_kanban_open(limit: int = 20) -> tuple[list[dict], str | None]:
+    """Open cards on the active board, resolved through `show` for full text."""
+    try:
+        try:
+            from . import kanban as _kb
+        except ImportError:
+            import kanban as _kb  # type: ignore
+        board = _scout_active_board(_kb)
+        prefix = ("--board", board) if board else ()
+        ok, out = _kb._dispatch(_kb._cli(*prefix, "list", "--json"))
+        if not ok:
+            return [], f"kanban unavailable: {str(out)[:200]}"
+        data = _scout_json(out)
+        items = None
+        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            items = data["tasks"]
+        elif isinstance(data, list):
+            items = data
+        if items is None:
+            return [], "kanban list returned no JSON"
+        closed = {"done", "archived", "cancelled", "canceled", "failed", "removed"}
+        cards: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "").lower().replace(" ", "_")
+            if status in closed:
+                continue
+            tid = item.get("id")
+            if not isinstance(tid, str):
+                continue
+            task, _ = _scout_kanban_task(tid, board)
+            cards.append(task or item)
+            if len(cards) >= limit:
+                break
+        return cards, None
+    except Exception as exc:  # noqa: BLE001 — degrade cleanly
+        return [], f"kanban unavailable: {type(exc).__name__}: {exc}"
+
+
+@_guard
+def kombat_scout(args: dict, **kwargs) -> str:
+    """Classify a task/card/board into lanes and build a deterministic card."""
+    try:
+        try:
+            from . import lanes as _ln
+        except ImportError:
+            import lanes as _ln  # type: ignore
+    except Exception as exc:
+        return _err(f"lane engine unavailable: {exc}")
+
+    card_id = args.get("card")
+    want_board = bool(args.get("board") or args.get("all"))
+    text = args.get("input", args.get("text", ""))
+
+    # Accept {"input": {"card": "..."}} as well as top-level keys.
+    if isinstance(text, dict):
+        payload = text
+        card_id = payload.get("card", card_id)
+        want_board = bool(payload.get("board", want_board))
+        text = payload.get("input") or payload.get("text") or ""
+    text = str(text or "").strip()
+
+    warnings: list[str] = []
+    pieces = [text] if text else []
+    source = "text"
+    kanban_info: dict | None = None
+
+    if card_id:
+        source = "card"
+        task, warn = _scout_kanban_task(str(card_id))
+        kanban_info = {"card": str(card_id)}
+        if task:
+            body = _scout_task_text(task)
+            kanban_info.update(
+                {"id": task.get("id", str(card_id)), "title": task.get("title"),
+                 "status": task.get("status")}
+            )
+            pieces = [body] if body else pieces
+        else:
+            warnings.append(warn or "kanban card unavailable")
+    elif want_board:
+        source = "board"
+        cards, warn = _scout_kanban_open()
+        kanban_info = {"board": True, "cards": len(cards)}
+        if warn:
+            warnings.append(warn)
+        texts = [_scout_task_text(c) for c in cards]
+        texts = [t for t in texts if t]
+        if texts:
+            pieces = texts
+    elif not text:
+        warnings.append("no input text — using fallback lanes")
+
+    combined = "\n".join(p for p in pieces if p).strip()
+    classified = _ln.classify(combined)
+
+    seed = args.get("seed")
+    if seed is None:
+        import hashlib
+
+        seed = int(hashlib.sha1(combined.encode("utf-8")).hexdigest()[:8], 16)
+
+    try:
+        extra = args.get("project_tasks")
+        card = _ln.build_card(classified, seed, extra_tasks=extra if isinstance(extra, list) else None)
+    except Exception as exc:
+        return _err(f"failed to build fight card: {type(exc).__name__}: {exc}")
+
+    reasons = [
+        "classified lanes: "
+        + ", ".join(f"{item['lane']} ({item['weight']})" for item in classified)
+    ]
+    for rnd in card["rounds"]:
+        tasks = rnd["tasks"]
+        detail = f"{len(tasks)} task(s)"
+        if tasks:
+            detail += ": " + ", ".join(tasks)
+        reasons.append(f"{rnd['id']} {rnd['name']} ({rnd['points']}pt/task) — {detail}")
+    if card.get("sudden_death_task"):
+        reasons.append(f"Sudden death — {card['sudden_death_task']}")
+    if source == "card" and kanban_info and kanban_info.get("title"):
+        reasons.append(f"scouted kanban card {kanban_info['id']}: {kanban_info['title']}")
+    if source == "board":
+        reasons.append(f"scouted {(kanban_info or {}).get('cards', 0)} open card(s) on the active board")
+    reasons.extend(warnings)
+
+    return _ok(
+        source=source,
+        input=combined[:2000],
+        lanes=classified,
+        card=card,
+        reasons=reasons,
+        kanban=kanban_info,
+        warnings=warnings,
+    )
 
 
 # ---------------------------------------------------------------- run a fight

@@ -1,0 +1,95 @@
+{
+  "lane": "reasoning",
+  "tasks": [
+    {
+      "id": "reasoning-001",
+      "lane": "reasoning",
+      "difficulty": 1,
+      "title": "Sum of two numbers",
+      "prompt": "What is the sum of 23 and 47?",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          70
+        ],
+        "tol": 0
+      },
+      "reference": "70"
+    },
+    {
+      "id": "reasoning-002",
+      "lane": "reasoning",
+      "difficulty": 1,
+      "title": "Difference",
+      "prompt": "Subtract 15 from 50.",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          35
+        ],
+        "tol": 0
+      },
+      "reference": "35"
+    },
+    {
+      "id": "reasoning-003",
+      "lane": "reasoning",
+      "difficulty": 2,
+      "title": "Total cost",
+      "prompt": "A store sells apples at $0.50 each and bananas at $0.30 each. If you buy 10 apples and 15 bananas, what is the total cost?",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          9.5
+        ],
+        "tol": 0.01
+      },
+      "reference": "9.5"
+    },
+    {
+      "id": "reasoning-004",
+      "lane": "reasoning",
+      "difficulty": 2,
+      "title": "Average speed",
+      "prompt": "A car travels 150 miles in 3 hours. What is the average speed in miles per hour?",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          50
+        ],
+        "tol": 0
+      },
+      "reference": "50"
+    },
+    {
+      "id": "reasoning-005",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "Profit after tax",
+      "prompt": "A company had revenue of $200,000 and expenses of $120,000. The tax rate is 20% on profit. What is the net profit after tax?",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          64000
+        ],
+        "tol": 0
+      },
+      "reference": "64000"
+    },
+    {
+      "id": "reasoning-006",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "Compound interest",
+      "prompt": "You invest $1000 at an annual interest rate of 5% compounded yearly. What is the amount after 2 years?",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          1102.5
+        ],
+        "tol": 0.01
+      },
+      "reference": "1102.5"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "status": "error",
+  "fight_id": "20261110-110300",
+  "card": {"title": "Billing report SQL", "lanes": ["sql", "reasoning"]},
+  "fighters": {
+    "a": {"id": "stealth/crouton-alpha", "short": "Crouton"},
+    "b": {"id": "deepseek/deepseek-v4.1-flash-1017", "short": "DS-Flash"}
+  },
+  "hp": {"a": 100, "b": 90},
+  "rounds": [
+    {
+      "id": "R1", "name": "Warm-up", "points": 1, "state": "done",
+      "tasks": [
+        {
+          "id": "sql-001", "lane": "sql", "title": "Monthly totals per vendor",
+          "a": {"state": "done", "score": 1.0, "latency_s": 4.0, "cost_usd": 0.0003, "detail": "rows match exactly"},
+          "b": {"state": "done", "score": 0.5, "latency_s": 5.1, "cost_usd": 0.0002, "detail": "1/2 row sets match"}
+        }
+      ]
+    },
+    {
+      "id": "R2", "name": "Main Event", "points": 2, "state": "fighting",
+      "tasks": [
+        {
+          "id": "sql-003", "lane": "sql", "title": "Window-function top customers",
+          "a": {"state": "error", "score": null, "latency_s": 12.0, "cost_usd": 0.0002, "detail": "provider timeout after 180s — round errored, excluded from points"},
+          "b": {"state": "done", "score": 1.0, "latency_s": 6.8, "cost_usd": 0.0003, "detail": "rows match exactly"}
+        },
+        {
+          "id": "reasoning-005", "lane": "reasoning", "title": "Deduce the missing total",
+          "a": {"state": "fighting", "score": null, "latency_s": null, "cost_usd": null, "detail": "writing answer…"},
+          "b": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"}
+        }
+      ]
+    },
+    {
+      "id": "R3", "name": "Championship", "points": 3, "state": "waiting",
+      "tasks": [
+        {
+          "id": "sql-008", "lane": "sql", "title": "Reconcile the ledger",
+          "a": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"},
+          "b": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"}
+        }
+      ]
+    }
+  ],
+  "sudden_death": null,
+  "winner": null,
+  "ko": false,
+  "points": {"a": 1.0, "b": 0.5},
+  "usage": {
+    "a": {"cost_usd": 0.0005, "tokens": 6110, "latency_s": 16.0},
+    "b": {"cost_usd": 0.0005, "tokens": 7200, "latency_s": 11.9}
+  },
+  "report_path": null,
+  "updated": "2026-11-10T11:03:08+00:00"
+}
