@@ -81,6 +81,17 @@ class Scoreboard:
 
     def start(self) -> None:
         self._run(_cli("boards", "create", BOARD))  # tolerate "exists"
+        # No parent/child links: kanban gates children on parents, which would
+        # deadlock round completion (rounds must finish before the fight card).
+        # Cards group visually by title + creation time instead.
+        for rnd in self.suite["rounds"]:
+            title = f"{rnd['id']} — {rnd['name']} ({rnd['points']} pt/task)"
+            body = "Tasks: " + ", ".join(rnd["tasks"]) + f"\nFighters: {self.fighter_a} vs {self.fighter_b}"
+            ok, out = self._run(
+                _cli("--board", BOARD, "create", title, "--body", body, "--json")
+            )
+            data = _extract_json(out) if ok else None
+            self.ids["rounds"][rnd["id"]] = (data or {}).get("id")
         parent_title = f"FIGHT: {self.fighter_a} vs {self.fighter_b}"
         ok, out = self._run(
             _cli("--board", BOARD, "create", parent_title,
@@ -89,16 +100,6 @@ class Scoreboard:
         )
         data = _extract_json(out) if ok else None
         self.ids["parent"] = (data or {}).get("id")
-        for rnd in self.suite["rounds"]:
-            title = f"{rnd['id']} — {rnd['name']} ({rnd['points']} pt/task)"
-            body = "Tasks: " + ", ".join(rnd["tasks"]) + f"\nFighters: {self.fighter_a} vs {self.fighter_b}"
-            cmd = _cli("--board", BOARD, "create", title, "--body", body, "--json")
-            if self.ids["parent"]:
-                cmd = _cli("--board", BOARD, "create", title, "--body", body,
-                           "--parent", self.ids["parent"], "--json")
-            ok, out = self._run(cmd)
-            data = _extract_json(out) if ok else None
-            self.ids["rounds"][rnd["id"]] = (data or {}).get("id")
 
     def round_fighting(self, round_id: str | None) -> None:
         card = self.ids["rounds"].get(round_id or "")
@@ -111,6 +112,7 @@ class Scoreboard:
                            "Fight aborted: host refused the model override."))
 
     def finish(self, rounds_out, winner: str, report_path) -> None:
+        scored_ids = {r["id"] for r in rounds_out}
         for rnd in rounds_out:
             card = self.ids["rounds"].get(rnd["id"])
             if not card:
@@ -127,6 +129,11 @@ class Scoreboard:
             self._run(_cli("--board", BOARD, "comment", card, text))
             self._run(_cli("--board", BOARD, "request-review", card))
             self._run(_cli("--board", BOARD, "complete", card, "--result", text[:500]))
+        # Close any round card this bout didn't fight (subset fights).
+        for round_id, card in self.ids["rounds"].items():
+            if card and round_id not in scored_ids:
+                self._run(_cli("--board", BOARD, "comment", card, "Not fought in this bout."))
+                self._run(_cli("--board", BOARD, "complete", card, "--result", "Not fought in this bout."))
         if self.ids["parent"]:
             if report_path and not str(report_path).startswith("report render failed"):
                 self._run(_cli("--board", BOARD, "attach", self.ids["parent"], str(report_path)))
