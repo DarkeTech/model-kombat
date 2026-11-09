@@ -46,6 +46,11 @@ def _ok(**payload) -> str:
 
 def _load_suite() -> dict:
     raw = json.loads((Path(__file__).parent / "tasks.json").read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or "tasks" not in raw or "rounds" not in raw:
+        raise ValueError(
+            "tasks.json has an unexpected shape (expected an object with 'tasks' and "
+            "'rounds'); the plugin code and suite may be out of sync — reload the plugin."
+        )
     tasks = {t["id"]: t for t in raw["tasks"]}
     return {
         "rounds": raw.get("rounds", []),
@@ -53,6 +58,26 @@ def _load_suite() -> dict:
         "order": [t["id"] for t in raw["tasks"]],
         "sudden_death_task": raw.get("sudden_death_task"),
     }
+
+
+def _guard(fn):
+    """Handler contract enforcement: never raise out of a tool.
+
+    Unexpected exceptions become error JSON with a short traceback instead of
+    a bare TOOL_ERROR, so failures are diagnosable from the chat transcript.
+    """
+    import functools
+    import traceback
+
+    @functools.wraps(fn)
+    def wrapper(args: dict, **kwargs) -> str:
+        try:
+            return fn(args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — last-resort guard, by design
+            tail = "\n".join(traceback.format_exc().splitlines()[-6:])
+            return _err(f"internal error: {type(exc).__name__}: {exc}", traceback=tail)
+
+    return wrapper
 
 
 def _load_tasks() -> list[dict]:
@@ -93,6 +118,7 @@ def _now_iso() -> str:
 
 # ---------------------------------------------------------------- list tasks
 
+@_guard
 def kombat_list_tasks(args: dict, **kwargs) -> str:
     try:
         suite = _load_suite()
@@ -170,6 +196,7 @@ def _complete_with_retry(ctx, fighter: str, prompt: str, temperature: float, max
     return "", {}, 2, str(last_exc)
 
 
+@_guard
 def kombat_run_fight(args: dict, **kwargs) -> str:
     fighter_a = str(args.get("fighter_a") or _cfg("fighter_a", "") or "").strip()
     fighter_b = str(args.get("fighter_b") or _cfg("fighter_b", "") or "").strip()
@@ -590,6 +617,7 @@ def _append_history(record: dict) -> None:
         pass
 
 
+@_guard
 def kombat_score_answers(args: dict, **kwargs) -> str:
     fighter_a = str(args.get("fighter_a") or "Fighter A").strip()
     fighter_b = str(args.get("fighter_b") or "Fighter B").strip()
@@ -758,6 +786,7 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
 
 # ---------------------------------------------------------------- history/export
 
+@_guard
 def kombat_history(args: dict, **kwargs) -> str:
     try:
         limit = int(args.get("limit", 10))
@@ -790,6 +819,7 @@ def kombat_history(args: dict, **kwargs) -> str:
     )
 
 
+@_guard
 def kombat_export(args: dict, **kwargs) -> str:
     fmt = str(args.get("format") or "json").lower()
     if fmt not in ("json", "md", "csv"):

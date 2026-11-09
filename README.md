@@ -127,6 +127,10 @@ is present. Round points go to the higher score fraction; draws split.
   block above (and `granted_capabilities`), then retry. Nothing was sent.
 - *`kombat_run_fight` says no host context* → you're calling it outside a live
   Hermes session with the plugin enabled; tools load next session after enable.
+- *Edited the plugin source but behavior is stale* → the gateway's plugin host
+  caches loaded code. Run `hermes plugins disable model-kombat` then
+  `hermes plugins enable model-kombat` to reload it, then start a fresh session
+  (no gateway restart needed).
 - *Agentic tasks stuck `ready`* → the gateway dispatcher isn't running
   (`hermes gateway start`). Pure fights don't need it.
 
