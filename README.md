@@ -1,55 +1,142 @@
-# 🥊 Model Kombat
+# Model Kombat
 
-**Choose your fighter.** Pit two Hermes models against each other in three
-escalating rounds — Warm-up, Main Event, Championship, plus sudden death —
-and score the fight *mechanically*: code gets executed, word counts get
-counted, facts get matched. No model judges the other.
+**Pit two Hermes models against each other on the same tasks and score the fight mechanically.**
+Model Kombat is a Hermes plugin for head-to-head model evaluation. Point it at a task or a kanban card and it classifies the work into lanes locally (keyword rules, no LLM call), builds a deterministic fight card — Warm-up 1 pt, Main Event 2 pt, Championship 3 pt, plus sudden death — sends the identical prompts to two models through the host's LLM facade, then scores every answer mechanically: executed code, exact counts, numeric tolerances, synonym-aware phrase groups, JSON leaf equality, SQLite row comparison. No model judges another model. Results land in a per-lane Elo ladder, on a live arcade-style scoreboard in the Desktop pane, and as a recommendation badge on the kanban card you started from.
 
 Built for the [Hermes Agent Plugin Hackathon](https://hermes-agent.nousresearch.com/docs/developer-guide/plugins).
 
-## Why
-
-Switching models in Hermes today means opening a new session per model and
-hand-scoring the results (we did exactly this — word counts by eye, code by
-copy-paste, and a fight *lost* on an exact-phrase scorer false-negative).
-Model Kombat automates the whole loop inside one session:
-
-```
-kombat_run_fight   →  both fighters answer identical prompts (via ctx.llm, host credentials)
-kombat_score_answers → weighted mechanical scoring + HTML versus scorecard
+```bash
+hermes plugins install model-kombat     # once listed in the catalog
 ```
 
-…while a **live kanban scoreboard** (`model-kombat` board, on by default)
-shows the fight moving card by card.
+## The 3-step PM workflow
 
-## The fight format
+1. **Scout the work.** `/kombat scout card:t_9f21c4` (or paste the task text, or `board` for every open card). Kombat reads the card, classifies it into lanes, and returns a fight card with rounds, stakes, task IDs and the reasons each lane was picked. The same input always builds the same card.
+2. **Fight.** Ask in chat: *"Fight `stealth/crouton-alpha` vs `deepseek/deepseek-v4.1-flash-1017` on that card."* The bundled skill calls `kombat_run_fight` with the scouted card (object or `card-…` id), both models answer every task in it, and the arcade pane plus the `model-kombat` kanban board update live while answers land. Pure fights run in the background, so the chat stays usable. The slash command `/kombat fight <A> vs <B>` instead runs the fixed legacy suite, not a scouted card.
+3. **Read the verdict.** `/kombat score` scores the fight and writes the HTML versus scorecard; `kombat_recommend` (or `/kombat recommend board`) writes the per-lane knockout pick into `recommendations.json`, which the Desktop paints as a badge on each kanban card — pick, lane, confidence, Elo.
 
-| Round | Name | Tasks | Stakes |
-|---|---|---|---|
-| R1 | Warm-up | Money math, exact format | 1 pt/task |
-| R2 | Main Event | Recall, summary fidelity, debug (executed) | 2 pts/task |
-| R3 | Championship | Leap-year code, Sudoku validator (both executed) | 3 pts/task |
-| SD | Sudden Death | Run-length encode (executed) | tie-break, winner takes the fight |
+## Lanes
 
-- **Championship K.O.:** pass every R3 task while your opponent fails one → win by K.O.
-- Errored and skipped (code-exec-off) rounds are **excluded from points**, never scored as failures.
-- Every call records **latency, tokens, and estimated cost**, with a spend budget cap (`max_fight_cost_usd`, default $2.00).
+Eight lanes; the scout picks the top three with non-zero weight and falls back to `reasoning` + `instruction` when nothing matches.
+
+| Lane | Signals it matches |
+|---|---|
+| `coding` | implement, refactor, algorithm, function, tests, API |
+| `debugging` | bug, traceback, stack trace, exception, broken |
+| `extraction` | extract, parse, fields, entities, invoice, scrape, key-value |
+| `summarization` | summarize, summary, tl;dr, condense, key points, shorten |
+| `reasoning` | calculate, how much/many, estimate, trade-off, percentages, totals |
+| `instruction` | exactly, constraints, must, do not, respond with, start/end with |
+| `recall` | passage-based questions, according to the text, quote, who, when did |
+| `sql` | SELECT, joins, GROUP BY, schema, rows |
+
+A card is built from the top lane(s):
+
+| Round | Stake | Tasks |
+|---|---|---|
+| R1 Warm-up | 1 pt | 2 difficulty-1 tasks from the top lane(s) |
+| R2 Main Event | 2 pts | 2–3 difficulty-2 tasks spread over the top two lanes |
+| R3 Championship | 3 pts | 1–2 difficulty-3 tasks from the top lane |
+| Sudden death | tie-break | 1 difficulty-2/3 task from the top lane |
+
+Project tasks in `<cwd>/.kombat/tasks.json` (same schema) are mixed into the lane's Main Event.
+
+## Tools
+
+All nine are registered under the `model_kombat` toolset.
+
+| Tool | What it does |
+|---|---|
+| `kombat_list_tasks` | Lists the fixed legacy suite (three rounds + sudden death) with each task's scorer type. |
+| `kombat_scout` | Classifies free text, `{"card": "<kanban id>"}` or `{"board": true}` into lanes and builds a deterministic card; stores it in `cards.json`. |
+| `kombat_run_fight` | Pure fight: both models answer every card task through the host LLM facade, with 429-aware waiting and a spend cap; drives live state and the board. |
+| `kombat_run_agentic_fight` | Same tasks run as real kanban worker sessions with a per-task model override; slower, needs a gateway dispatcher, billed per worker. |
+| `kombat_score_answers` | Scores answer sets mechanically, writes the HTML versus scorecard, appends to history and updates the ladder. |
+| `kombat_rematch_errors` | Re-runs only the (task, fighter) pairs that errored and merges the new answers into the stored fight. |
+| `kombat_recommend` | Per-lane knockout pick from the ladder (pick, margin, confidence, cost per point, runner-up, why); `board: true` writes card badges. |
+| `kombat_history` | Lists recent scored fights (winner, points, report path). |
+| `kombat_export` | Exports one past fight as JSON, Markdown or CSV under the plugin data dir. |
+
+## Slash commands
+
+| Command | Action |
+|---|---|
+| `/kombat` or `/kombat help` | The command list and current fight setup. |
+| `/kombat tasks` | Lists the legacy fixed suite. |
+| `/kombat scout <text>` | Classify text, build a card. |
+| `/kombat scout card:<id>` | Scout one kanban card. |
+| `/kombat scout board` | Scout every open card on the active board. |
+| `/kombat fight <A> vs <B>` | Pure fight on the fixed legacy suite, in the background. For a scouted card, ask the agent to run `kombat_run_fight` with `card`. |
+| `/kombat agentic <A> vs <B>` | Agentic worker fight in the background. |
+| `/kombat status` | Whether the background fight is running, and the result/error when it finished. |
+| `/kombat score` | Scores the last fight in this session and prints the scorecard path. |
+| `/kombat rematch` | Re-fights the last fight's errored tasks. |
+| `/kombat history` | Ten most recent fights. |
+| `/kombat export [json\|md\|csv]` | Exports the latest fight (with several in history, call `kombat_export` with `index`). |
+| `/kombat recommend [lane\|board]` | Knockout pick for a lane, or badges for every open card. |
+| `/kombat ladder` | The raw per-lane Elo ladder. |
+
+You can also just ask: *"Scout this kanban card and fight these two models on it"* — the bundled `model-kombat` skill drives the tools.
+
+## The Desktop pane
+
+The pane docks on the right; there is also a full page at `/kombat`, a sidebar entry, a status-bar chip and the palette command **Open Model Kombat**. It subscribes to `plugin.model-kombat.fight.updated` events and falls back to REST polling of the plugin's read-only dashboard API.
+
+| Screen | What it shows |
+|---|---|
+| ![Wide arena](docs/previews/arena_wide.png) | **Wide layout** — HP bars, round banner, task table, usage table. |
+| ![Mid-fight](docs/previews/arena_mid.png) | **Mid-fight** — hit flashes per task, HP dropping as points are won. |
+| ![K.O.](docs/previews/arena_ko.png) | **Finished** — K.O. stamp, winner card, final points. |
+| ![Errored task](docs/previews/arena_error.png) | **Degraded** — a rate-limited task shown as an error, excluded from points, never counted as a loss. |
+
+![Model Kombat banner](docs/banner.png)
+
+These images use repository-relative paths for local previews. The catalog entry pins every image to the submitted commit, e.g. `https://raw.githubusercontent.com/DarkeTech/model-kombat/<40-char-sha>/docs/previews/arena_ko.png`, so the published listing can never drift from the code.
+
+## How scoring works
+
+Every task carries a mechanical check spec. Each returns `score` (a fraction 0–1), `status` (`scored` | `skipped` | `errored`) and a human `detail` string.
+
+| Check type | What it measures | Score |
+|---|---|---|
+| `exact` | Whole answer (or its last non-empty line) equals the expected string after trim/case/space normalisation. | 1.0 or 0.0 |
+| `numeric` | Each expected number appears in the answer within tolerance. | fraction found |
+| `phrases` | Each group of acceptable alternatives is present (case/space-insensitive), so "no one was injured" counts for "no injuries". | fraction of groups hit |
+| `regex` | A pattern matches. | 1.0 or 0.0 |
+| `constraints` | Word/sentence counts, starts-with, ends-with, banned and required tokens — one sub-check each. | fraction passed |
+| `json_fields` | Expected leaf fields inside the first JSON object in the answer, numbers within tolerance. | fraction matched |
+| `code_exec` | The answer's fenced Python block runs against `args`/`expect`/`raises` cases in the hardened runner. | fraction of cases passed; `skipped` when execution is off |
+| `sql_exec` | The answer's fenced SQL (SELECT/WITH only) runs against an in-memory SQLite database and its rows are compared. | rows match or not |
+
+**Errored is not failed.** A task with an errored answer side (typically a 429) or a `skipped` check (code execution off) is **excluded** from the round: it awards no points to either side and is never scored as a loss. A round where nothing could be scored is marked with an asterisk in the scorecard and contributes zero. Bad *answers* score 0.0; only bad *check specs* error.
+
+**Round points.** In an adaptive card, the round's stake (1/2/3) goes to the fighter with the higher summed score fraction across that round's included tasks; an exact tie splits the stake. The fixed legacy suite awards each task its round's points instead.
+
+**K.O.** Win every included Championship task outright while the opponent scores below 1.0 on at least one of them, and the fight ends by K.O. regardless of the earlier points.
+
+**Sudden death.** Only when the points are exactly tied after the Championship: the sudden-death task is scored, decides the winner, and adds no points of its own. If it also ties (or could not be scored), the fight is a draw.
+
+**Ladder.** Each scored lane bout updates `ladder.json`: Elo per model per lane, K=24, starting at 1500, plus wins/losses/draws, fights, points, cost and latency. A recommendation's **confidence** comes from the pick's fight count — fewer than 3 fights is `low`, 3–7 `medium`, 8 or more `high` — and drops one level when the Elo margin over the runner-up is under 15. **Cost per point** is the model's recorded spend in that lane divided by the points it won there, so a cheap model that wins narrowly can outrank an expensive one.
 
 ## Install
 
 ```bash
 hermes plugins install model-kombat          # from the catalog, once listed
-# or from a checkout:
-git clone <this repo> ~/src/model-kombat
+```
+
+From a checkout:
+
+```bash
+git clone https://github.com/DarkeTech/model-kombat ~/src/model-kombat
 ln -s ~/src/model-kombat ~/.hermes/plugins/model-kombat
 hermes plugins enable model-kombat
 ```
 
-### One-time setup for fights
+Restart the session (or the Desktop app) after enabling: the tool list is built at session start.
 
-Fights call `ctx.llm.complete(model=...)`, which is gated by design (the plugin
-never sees your credentials). Enable model overrides for this plugin in
-`~/.hermes/config.yaml`:
+### One-time setup: allow the model override
+
+Fights call the host's LLM facade with an explicit model, which is gated by design — the plugin never sees your credentials. Grant it once in `~/.hermes/config.yaml`:
 
 ```yaml
 plugins:
@@ -57,117 +144,115 @@ plugins:
     model-kombat:
       llm:
         allow_model_override: true
-        # recommended: bound spend to named models
-        allowed_models: ["stealth/crouton-alpha", "deepseek/deepseek-v4.1-flash-1017"]
+        # recommended: bound spend to the models you actually want to compare
+        allowed_models:
+          - stealth/crouton-alpha
+          - deepseek/deepseek-v4.1-flash-1017
       granted_capabilities: ["llm.model_override"]
 ```
 
-Scoring pasted answer sets (`kombat_score_answers`) needs no LLM access at all.
+`allowed_models` is optional but recommended: without it, any model ID you type is accepted. With it, a fight can only use the listed IDs. Scoring pasted answer sets with `kombat_score_answers` needs no LLM access at all. Check what the host thinks is granted with `hermes plugins capabilities model-kombat` (declared vs granted).
 
-## Usage
+## Settings
 
-In any Hermes session:
+Settings → Plugins → Model Kombat (all keys from `plugin.yaml`):
 
-```
-/kombat tasks                          # list the rounds + sudden death
-/kombat fight A vs B                   # pure fight — background job, watch the board
-/kombat agentic A vs B                 # agentic fight — kanban workers with model overrides
-/kombat status                         # background fight status
-/kombat rematch                        # re-fight the last fight's errored tasks (e.g. after a 429)
-/kombat score                          # score the last fight + versus scorecard
-/kombat history                        # recent fights
-/kombat export [json|md|csv]           # export the latest fight
-```
+| Setting | Default | Meaning |
+|---|---|---|
+| `fighter_a` | `stealth/crouton-alpha` | Default first model ID. |
+| `fighter_b` | `deepseek/deepseek-v4.1-flash-1017` | Default second model ID. |
+| `temperature` | `0` | Applied to both fighters; 0 keeps the comparison fair. |
+| `max_tokens` | `2000` | Max tokens per answer. |
+| `max_fight_cost_usd` | `2.0` | Pure fights stop once estimated cumulative cost passes this. Agentic worker billing is separate and not capped. |
+| `llm_timeout_s` | `180` | Per-call timeout. |
+| `pace_ms` | `0` | Pause before each model call, to stay under provider rate limits. |
+| `max_rate_wait_s` | `120` | Longest single 429 wait before the pair is reported errored. |
+| `auto_rematch` | `true` | Retry errored (task, fighter) pairs up to two extra passes inside the same fight. |
+| `agentic_timeout_s` | `600` | Max runtime per agentic worker task. |
+| `allow_code_execution` | `false` | Execute model-written code for code tasks. Off means those tasks are skipped and excluded from points. Not a sandbox — see Disclosure. |
+| `show_on_kanban` | `true` | Mirror the fight onto the dedicated `model-kombat` board (unassigned display cards). |
 
-Or just ask: *"Run a fight between stealth/crouton-alpha and
-deepseek/deepseek-v4.1-flash-1017"* — the bundled `model-kombat` skill drives
-the tools.
+The run tool also accepts `rate_wait_budget_s` (total 429 wait per fight, default 240) and `max_rematch_passes` (0–2) per call.
 
-### Pure vs agentic
+## Differentiation
 
-- **Pure (default):** both fighters answer via `ctx.llm` — fast, budgeted, benchmark-pure.
-- **Agentic (explicit opt-in):** each task becomes a real kanban worker task with a
-  per-task model override (`--model`), so full agent workers solve with tools and cards
-  move live. Requires a running gateway dispatcher. Workers are billed per session and
-  are **not** covered by the pure fight's budget cap.
+Closest existing catalog entries, and what each one actually does:
 
-## Settings (Settings → Plugins → Model Kombat)
+| Entry | What it does | How Model Kombat differs |
+|---|---|---|
+| `model-drift-watch` | Scheduled check that the model you use has not quietly got worse; 34 fixed questions, per-question exact grading, cron. | Kombat builds an adaptive card per task and fights two models head-to-head; drift-watch watches one model over time on a fixed set. |
+| `model-leaderboard` | A `/model-leaderboard` page ranking OpenRouter models on context, price and public benchmarks. | Kombat evaluates two specific models on *your* tasks; the leaderboard ranks the whole OpenRouter catalogue on public numbers. |
+| `evalroute` | Classifies a task into a lane and routes it to a (model, reasoning effort) arm before starting. | Kombat uses the lane to build a scored contest between two fixed fighters, not to route one job. |
+| `arena-skill` | Tournament of N sub-agents competing to produce the best answer. | Kombat is exactly two models, scored mechanically per task, not N agents judged by an agent. |
+| `hermes-model-switcher` | Dashboard tab for per-profile model selection across Hermes's model slots, with apply/revert. | Kombat measures models against each other with mechanical scoring and board badges; the switcher changes which model a profile uses. |
+| `openrouter-picker` | Desktop model picker plus composer provider. | Kombat never selects a model for you: it produces evidence (points, Elo, cost per point) for a pairing you chose. |
 
-`fighter_a/b` defaults · `temperature` · `max_tokens` · `max_fight_cost_usd` ·
-`llm_timeout_s` · `agentic_timeout_s` · `allow_code_execution` ·
-`show_on_kanban` (default **on**).
+No other listed entry ships an arcade-versus pane or per-card kanban recommendation badges (catalog scan at submission time).
 
-## How scoring works
+## Disclosure
 
-Each task is scored mechanically: numeric tolerance for money, synonym-aware
-phrase matching for recall (so "no one was injured" counts), whitespace word
-counts for format/summary, and **subprocess execution** for code tasks
-(leap-year, Sudoku validator, run-length encode, second-largest debug).
-The debug task falls back to a labelled heuristic only when no executable code
-is present. Round points go to the higher score fraction; draws split.
+Read this before installing.
 
-If a fight's rounds were excluded because a fighter errored (typically a 429
-rate limit), `/kombat rematch` re-fights **only** those (task, fighter) pairs
-and merges the answers — then score again. No need to re-run the whole fight.
-
-## Disclosure (please read before installing)
-
-- **LLM spend:** pure fights call your configured provider through `ctx.llm`
-  with the model you name; usage/cost is recorded per call and capped by
-  `max_fight_cost_usd`. Agentic fights spawn worker sessions billed separately.
-- **Code execution:** when `allow_code_execution` is on, model-written Python
-  runs in a subprocess as your user with a 10s timeout and a stripped-down env.
-  **This is not a security sandbox** — it is not safe against hostile code.
-  Only enable it for models you trust. Off by default; those rounds are excluded.
-- **Kanban writes:** with `show_on_kanban` on (default), the plugin creates/updates
-  cards on a dedicated `model-kombat` board via the host's `terminal` tool
-  (approval pipeline). Cards are unassigned display cards, never dispatched.
-  Board updates are best-effort and never fail a fight.
-- **File writes:** reports, history (`fights.jsonl`), and exports live under
-  `~/.hermes/plugin-data/model-kombat/`. No telemetry, no other files read.
+- **Network.** No third-party service calls. Fights go through the host's LLM facade (`ctx.llm.complete`) to whichever provider your profile already uses, under Hermes's own routing and credentials. The dashboard API is local and read-only; the Desktop pane talks to it through the host.
+- **LLM spend.** A pure fight bills two model calls per task to your account. Usage (latency, tokens, estimated cost) is recorded per call, and the fight stops when estimated cumulative cost passes `max_fight_cost_usd` (default $2.00). Agentic fights dispatch real worker sessions, billed separately and **not** covered by that cap.
+- **Subprocess and code execution.** `code_exec` tasks are **off by default**; when off they are `skipped` and excluded from points. When enabled, model-written Python runs in a separate `python -I` subprocess with cwd in a fresh tempdir, an empty environment, resource limits (CPU, address space, core files, processes, file size), a wall timeout (12 s cap), capped output, a Python audit hook and an import blocker. At the Python level it refuses writes and renames outside the tempdir, process spawning, network audit events (`socket.*`) and imports of `ctypes`, `socket`, `subprocess`, `multiprocessing`, `pty`, `urllib` and similar modules.
+  **It is defense-in-depth, not a sandbox.** It does not stop direct syscalls, code paths in already-loaded C extensions, `ctypes` reached through a preloaded shared object, or anything else that never emits a Python audit event; reads outside the tempdir are restricted only on the same best-effort basis. The code runs as your user. Enable it only for models you are willing to trust with that.
+- **Kanban writes.** With `show_on_kanban` on (default), the plugin creates a dedicated `model-kombat` board, a parent scoreboard card and one card per task through the host's `terminal` tool, i.e. through Hermes's normal command approval. Cards are **unassigned display cards** and are never dispatched to a worker. Board updates are best-effort: a failure never fails the fight.
+- **File writes.** Reports, `live.json`, `ladder.json`, `recommendations.json`, `cards.json`, `fights.jsonl` and exports are written under the plugin data dir (`$HERMES_HOME/plugin-data/model-kombat/`, else `~/.hermes/plugin-data/model-kombat/`). Nothing else on disk is written.
+- **Desktop plugin and dashboard API.** `desktop/plugin.js` runs in the Desktop renderer using only the plugin SDK (pane, route, sidebar, status chip, palette command, kanban badges); it registers no DOM patches and loads no remote code. `dashboard/plugin_api.py` exposes read-only `GET /live`, `/ladder`, `/history`, `/recommendations`, `/health`, mounted under `/api/plugins/model-kombat/`.
+- **Telemetry.** None. No analytics, no phone-home, no update check.
+- **Credentials.** Never read. No `.env`, `auth.json`, keychain or vendor token files; the plugin has no `requires_env` and only ever asks the host to make a call. Its only declared capability is `llm.model_override`.
 
 ## Troubleshooting
 
-- *"Host refused the model override"* → set the `llm.allow_model_override` config
-  block above (and `granted_capabilities`), then retry. Nothing was sent.
-- *`kombat_run_fight` says no host context* → you're calling it outside a live
-  Hermes session with the plugin enabled; tools load next session after enable.
-- *Edited the plugin source but behavior is stale* → the gateway's plugin host
-  caches loaded code. Run `hermes plugins disable model-kombat` then
-  `hermes plugins enable model-kombat` to reload it, then start a fresh session
-  (no gateway restart needed).
-- *Agentic tasks stuck `ready`* → the gateway dispatcher isn't running
-  (`hermes gateway start`). Pure fights don't need it.
+| Symptom | Cause and fix |
+|---|---|
+| *"Host refused the model override"* | The `llm.allow_model_override` block above is missing or the model isn't in `allowed_models`. Fix config, retry. Nothing was sent. |
+| Tools missing after enabling | The tool list is built at session start. Start a new session (Desktop: reload the window). |
+| Edited the source, behaviour is stale | The plugin host caches loaded code. `hermes plugins disable model-kombat && hermes plugins enable model-kombat`, then start a fresh session. No gateway restart needed. |
+| Fights stalling on 429s, or tasks arriving `errored` | Rate limits are waited out with jittered backoff: up to three attempts per call, up to `max_rate_wait_s` per wait, within a 240 s per-fight wait budget, then up to two auto-rematch passes. Set `pace_ms` (e.g. 500–1500) and raise `max_rate_wait_s` for tight providers. Errored pairs are excluded, not failed — `/kombat rematch` after the limit clears. |
+| A round shows an asterisk | Every task in it was excluded (errors or code execution off). Nothing was awarded to either side; re-run or enable execution. |
+| `code_exec` tasks all skipped | `allow_code_execution` is false. That is the default; the tasks are excluded from points. |
+| Agentic tasks stuck `ready` | The gateway dispatcher isn't running: `hermes gateway start`. Pure fights don't need it. |
+| Board missing or empty | `show_on_kanban` is off, or the host `terminal` command failed (board updates are best-effort). Check `hermes kanban boards`. |
+| Pane or `/kombat` page blank | The dashboard backend isn't serving; confirm the gateway is up and `GET /api/plugins/model-kombat/health` responds. The pane falls back to polling only if the event stream is unavailable, not if the API is down. |
 
 ## Develop / validate
 
 ```bash
-python3 tests/test_scoring.py              # scorer + mock-host tests (no Hermes needed)
+python3 tests/test_scoring.py                 # scorer + mock-host tests (no Hermes needed)
+for t in tests/test_*.py; do python3 "$t" || break; done   # full suite, plain scripts
 hermes plugins doctor . --ci               # registration check
-hermes plugins validate . --install-deps   # catalog check (must pass before PR)
+hermes plugins validate . --install-deps   # catalog check — must pass before a PR
+python3 scripts/render_previews.py         # regenerate docs/previews/*.png (needs chromium)
+python3 scripts/make_banner.py             # regenerate docs/banner.png (1200x600)
 ```
 
 ## Layout
 
 ```
-plugin.yaml          manifest (capabilities: llm.model_override)
-__init__.py          register(): 6 tools + /kombat command (background jobs) + bundled skill
-schemas.py           tool schemas (what the LLM sees)
-tools.py             pure fight runner (ctx.llm), deterministic scorers, HTML report, history/export
-kanban.py            kanban scoreboard + agentic worker fights
-tasks.json           seed suite (3 rounds + sudden death)
-skills/model-kombat/ bundled skill (plugin:model-kombat)
-tests/               scorer + mock-host tests
-catalog/model-kombat.yaml  draft catalog entry (for the submission PR)
+plugin.yaml            manifest (capabilities: llm.model_override, 9 tools, config schema)
+__init__.py            register(): tools, /kombat command, bundled skill
+schemas.py             tool schemas (what the model sees)
+tools.py               pure fight runner, scoring, history, report, kanban hookup
+engine_checks.py       mechanical check-spec scorers + hardened code/SQL runner
+lanes.py               lane classifier, task pool, card builder
+ladder.py              per-lane Elo, recommendations, cost per point
+live.py                live.json state machine + event broadcast
+kanban.py              board scoreboard, agentic worker fights
+render.py              standalone HTML scorecards and arena previews
+dashboard/             read-only FastAPI plugin API (plugin_api.py)
+desktop/               Desktop pane/route/badges (plugin.js)
+tasks/ , tasks.json    lane task pools + legacy fixed suite
+docs/ARCHITECTURE.md   module and data-flow map
 ```
 
 ## Roadmap
 
-- Desktop versus-screen pane (`desktop/plugin.js`)
-- Judge-assisted rounds for open-ended tasks (labelled non-deterministic)
-- Custom task-suite files; model discovery suggestions from fight history
-- GPU feasibility round ("Can I run it?" — VRAM vs model size)
+- Judge-assisted rounds for open-ended tasks, clearly labelled non-deterministic and never mixed into mechanical points.
+- Richer lane coverage (vision, long-context) and per-lane task packs beyond the eight current lanes.
+- Ladder trends over time (Elo history per model, not just the latest rating).
 
 ## License
 
-MIT (see `LICENSE`). Name is a parody homage; no assets, logos, or audio from any game series.
+MIT — see `LICENSE`. All names, art, CSS and audio cues are original; the plugin ships no third-party sprites, logos, fonts or sound.

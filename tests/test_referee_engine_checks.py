@@ -363,21 +363,21 @@ def read_auth():
 
 
 def test_code_exec_spawn_subprocess():
-    """Spawn subprocess via subprocess.run - should be blocked by audit hook."""
+    """Spawn subprocess via subprocess.run - import is NOW BLOCKED by import blocker."""
     check = {
         "type": "code_exec",
         "entrypoint": "spawn",
-        "cases": [{"args": [], "raises": "PermissionError"}],
+        "cases": [{"args": [], "raises": "ImportError"}],
         "timeout_s": 5,
     }
     code = """```python
-import subprocess
 def spawn():
+    import subprocess
     subprocess.run(['true'], check=False)
     return True
 ```"""
     out = run(check, code, True)
-    assert out["score"] == 1.0, f"subprocess.run() allowed: {out}"
+    assert out["score"] == 1.0, f"subprocess import not blocked: {out}"
 
 
 def test_code_exec_spawn_os_system():
@@ -420,25 +420,23 @@ def spawn():
 
 
 def test_code_exec_spawn_multiprocessing():
-    """Spawn process via multiprocessing - should be blocked by audit hook / RLIMIT_NPROC."""
+    """Spawn process via multiprocessing - import is NOW BLOCKED by import blocker."""
     check = {
         "type": "code_exec",
         "entrypoint": "spawn",
-        "cases": [{"args": [], "raises": "PermissionError"}],
+        "cases": [{"args": [], "raises": "ImportError"}],
         "timeout_s": 5,
     }
     code = """```python
-import multiprocessing
 def spawn():
+    import multiprocessing
     p = multiprocessing.Process(target=lambda: None)
     p.start()
     p.join()
     return True
 ```"""
     out = run(check, code, True)
-    # multiprocessing uses fork/spawn - may raise PicklingError or PermissionError
-    # The audit hook covers os.fork but multiprocessing may fail differently
-    assert out["score"] == 1.0 or "PicklingError" in out["detail"], f"multiprocessing not blocked: {out}"
+    assert out["score"] == 1.0, f"multiprocessing import not blocked: {out}"
 
 
 def test_code_exec_network_socket():
@@ -570,11 +568,11 @@ def spew():
 
 
 def test_code_exec_import_ctypes():
-    """Import ctypes - allowed (not blocked by audit hook)."""
+    """Import ctypes - NOW BLOCKED by import blocker + audit hook."""
     check = {
         "type": "code_exec",
         "entrypoint": "import_ctypes",
-        "cases": [{"args": [], "expect": True}],
+        "cases": [{"args": [], "raises": "ImportError"}],
         "timeout_s": 5,
     }
     code = """```python
@@ -583,16 +581,16 @@ def import_ctypes():
     return True
 ```"""
     out = run(check, code, True)
-    assert out["score"] == 1.0, f"import ctypes blocked: {out}"
-    print("  [ctypes import] ALLOWED (no audit hook for imports)")
+    assert out["score"] == 1.0, f"import ctypes not blocked: {out}"
+    print("  [ctypes import] BLOCKED by import blocker")
 
 
 def test_code_exec_import_mmap():
-    """Import mmap - allowed."""
+    """Import mmap - NOW BLOCKED by import blocker + audit hook."""
     check = {
         "type": "code_exec",
         "entrypoint": "import_mmap",
-        "cases": [{"args": [], "expect": True}],
+        "cases": [{"args": [], "raises": "ImportError"}],
         "timeout_s": 5,
     }
     code = """```python
@@ -601,7 +599,7 @@ def import_mmap():
     return True
 ```"""
     out = run(check, code, True)
-    assert out["score"] == 1.0, f"import mmap blocked: {out}"
+    assert out["score"] == 1.0, f"import mmap not blocked: {out}"
 
 
 def test_code_exec_monkeypatch_builtins():
@@ -905,6 +903,540 @@ def test_regex_catastrophic_backtracking():
     # But if a model could influence the pattern... not applicable here
 
 
+# ------------------------------------------------------------------ hardening defeat probes (KNOWN_GAP_* = currently allowed, documents gaps)
+
+def test_KNOWN_GAP_importlib_import_module_blocked():
+    """importlib.import_module('ctypes') - blocked by import audit hook."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import importlib
+    importlib.import_module('ctypes')
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"importlib.import_module('ctypes') not blocked: {out}"
+    print("  [importlib.import_module] BLOCKED")
+
+
+def test_KNOWN_GAP_dunder_import_blocked():
+    """__import__('ctypes') - blocked by import audit hook."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    __import__('ctypes')
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"__import__('ctypes') not blocked: {out}"
+    print("  [__import__] BLOCKED")
+
+
+def test_KNOWN_GAP_importlib_util_spec_blocked():
+    """importlib.util.spec_from_file_location on stdlib ctypes path - blocked by open audit hook (read) before import."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import importlib.util, sys
+    # Try to load ctypes from its stdlib path
+    spec = importlib.util.spec_from_file_location('ctypes', '/usr/lib/python3.12/ctypes/__init__.py')
+    if spec and spec.loader:
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        sys.modules['ctypes'] = mod
+        return True
+    return False
+```"""
+    out = run(check, code, True)
+    # open audit hook fires on reading the .py file -> PermissionError (not in allowed read roots)
+    assert out["score"] == 1.0, f"importlib.util.spec_from_file_location not blocked: {out}"
+    print("  [importlib.util.spec] BLOCKED (via open audit hook)")
+
+
+def test_KNOWN_GAP_sys_modules_alias_lookup():
+    """Access blocked module via sys.modules['socket'] if another stdlib module already imported it."""
+    # os module imports socket internally in CPython
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": None}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import os, sys
+    # os module may have imported socket
+    sock_mod = sys.modules.get('socket')
+    if sock_mod:
+        return sock_mod  # got socket module!
+    return None
+```"""
+    out = run(check, code, True)
+    # os doesn't always expose socket in sys.modules; but if it does, this is a gap
+    # Current behavior: os doesn't put socket in sys.modules by default
+    print(f"  [sys.modules alias] result: {out['detail']}")
+    # Don't assert - document current behavior
+
+
+def test_KNOWN_GAP_read_via_os_open():
+    """Read outside tempdir via os.open/os.read - should be BLOCKED by audit hook on open (read)."""
+    import tempfile
+    canary = Path(tempfile.gettempdir()) / f"kombat-probe-read-{os.getpid()}.txt"
+    canary.write_text("SECRET_VIA_OS_OPEN", encoding="utf-8")
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import os
+def probe():
+    fd = os.open({str(canary)!r}, os.O_RDONLY)
+    data = os.read(fd, 100)
+    os.close(fd)
+    return data.decode()
+```"""
+    out = run(check, code, True)
+    canary.unlink(missing_ok=True)
+    assert out["score"] == 1.0, f"os.open/os.read outside tempdir not blocked: {out}"
+    print("  [os.open read] BLOCKED")
+
+
+def test_KNOWN_GAP_read_via_io_fileio():
+    """Read outside tempdir via io.FileIO - should be BLOCKED by audit hook on open."""
+    import tempfile
+    canary = Path(tempfile.gettempdir()) / f"kombat-probe-fileio-{os.getpid()}.txt"
+    canary.write_text("SECRET_VIA_FILEIO", encoding="utf-8")
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import io
+def probe():
+    with io.FileIO({str(canary)!r}, 'r') as fh:
+        return fh.readall().decode()
+```"""
+    out = run(check, code, True)
+    canary.unlink(missing_ok=True)
+    assert out["score"] == 1.0, f"io.FileIO read outside tempdir not blocked: {out}"
+    print("  [io.FileIO read] BLOCKED")
+
+
+def test_KNOWN_GAP_read_via_pathlib():
+    """Read outside tempdir via pathlib.Path.read_text - should be BLOCKED by audit hook on open."""
+    import tempfile
+    canary = Path(tempfile.gettempdir()) / f"kombat-probe-pathlib-{os.getpid()}.txt"
+    canary.write_text("SECRET_VIA_PATHLIB", encoding="utf-8")
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+from pathlib import Path
+def probe():
+    return Path({str(canary)!r}).read_text()
+```"""
+    out = run(check, code, True)
+    canary.unlink(missing_ok=True)
+    assert out["score"] == 1.0, f"pathlib read outside tempdir not blocked: {out}"
+    print("  [pathlib read] BLOCKED")
+
+
+def test_KNOWN_GAP_read_via_linecache():
+    """Read outside tempdir via linecache.getline - may be blocked or allowed depending on cache."""
+    import tempfile
+    canary = Path(tempfile.gettempdir()) / f"kombat-probe-linecache-{os.getpid()}.txt"
+    canary.write_text("line1\nSECRET_VIA_LINECACHE\nline3", encoding="utf-8")
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "SECRET_VIA_LINECACHE"}], "timeout_s": 5}
+    code = f"""```python
+import linecache
+def probe():
+    return linecache.getline({str(canary)!r}, 2).strip()
+```"""
+    out = run(check, code, True)
+    canary.unlink(missing_ok=True)
+    # linecache may or may not be blocked; document behavior
+    if out["score"] == 1.0:
+        print("  [linecache read] ALLOWED (gap: linecache bypasses audit hook?)")
+    else:
+        print(f"  [linecache read] BLOCKED: {out['detail']}")
+    # Don't assert - document current behavior
+
+
+def test_KNOWN_GAP_read_via_proc_self():
+    """Read /proc/self/... - should be BLOCKED by audit hook on open (not in stdlib/site)."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    with open('/proc/self/status', 'r') as fh:
+        return fh.read()
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"/proc/self read not blocked: {out}"
+    print("  [/proc/self read] BLOCKED")
+
+
+def test_KNOWN_GAP_write_via_os_open_creat():
+    """Write outside tempdir via os.open with O_CREAT - should be BLOCKED by audit hook on open (write)."""
+    import tempfile
+    leak = Path(tempfile.gettempdir()) / f"kombat-probe-write-{os.getpid()}.txt"
+    if leak.exists():
+        leak.unlink()
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import os
+def probe():
+    fd = os.open({str(leak)!r}, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    os.write(fd, b'escaped')
+    os.close(fd)
+    return True
+```"""
+    out = run(check, code, True)
+    leaked = leak.exists()
+    if leaked:
+        leak.unlink()
+    assert out["score"] == 1.0, f"os.open O_CREAT write outside tempdir not blocked: {out}"
+    assert not leaked, f"sandbox leaked write via os.open O_CREAT to {leak}"
+    print("  [os.open O_CREAT write] BLOCKED")
+
+
+def test_KNOWN_GAP_chdir_then_relative_write():
+    """chdir out of tempdir then write via relative path - should be BLOCKED (audit hook resolves realpath)."""
+    import tempfile
+    leak_dir = Path(tempfile.gettempdir())
+    leak = leak_dir / f"kombat-probe-chdir-{os.getpid()}.txt"
+    if leak.exists():
+        leak.unlink()
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import os
+def probe():
+    os.chdir({str(leak_dir)!r})
+    with open('leak.txt', 'w') as fh:
+        fh.write('escaped')
+    return True
+```"""
+    out = run(check, code, True)
+    leaked = leak.exists()
+    if leaked:
+        leak.unlink()
+    assert out["score"] == 1.0, f"chdir + relative write not blocked: {out}"
+    assert not leaked, f"sandbox leaked write via chdir to {leak}"
+    print("  [chdir + relative write] BLOCKED")
+
+
+def test_KNOWN_GAP_os_fdopen_inherited():
+    """os.fdopen on inherited fd (stdin/stdout/stderr) - fds 0,1,2 are DEVNULL/pipe, not real files."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "error"}], "timeout_s": 5}
+    code = """```python
+import os
+def probe():
+    # Try to fdopen stdout (fd 1) and write
+    try:
+        fh = os.fdopen(1, 'w')
+        fh.write('escaped')
+        fh.close()
+        return 'wrote to fd 1'
+    except Exception as e:
+        return f'error: {e}'
+```"""
+    out = run(check, code, True)
+    # fd 1 is connected to the log pipe; writing may work but goes to log, not outside
+    print(f"  [os.fdopen inherited] result: {out['detail']}")
+    # Don't assert - document behavior
+
+
+def test_KNOWN_GAP_os_execv():
+    """os.execv - should be BLOCKED by exec audit hook."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = """```python
+import os
+def probe():
+    os.execv('/bin/true', ['true'])
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"os.execv not blocked: {out}"
+    print("  [os.execv] BLOCKED")
+
+
+def test_KNOWN_GAP_signal_tricks():
+    """Signal handlers to escape - signals deliver in process, but can't easily escape sandbox."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "caught"}], "timeout_s": 5}
+    code = """```python
+import signal, os
+def probe():
+    caught = []
+    def handler(signum, frame):
+        caught.append(signum)
+    signal.signal(signal.SIGUSR1, handler)
+    os.kill(os.getpid(), signal.SIGUSR1)
+    return 'caught' if caught else 'not caught'
+```"""
+    out = run(check, code, True)
+    print(f"  [signal tricks] result: {out['detail']}")
+    # Document behavior
+
+
+def test_KNOWN_GAP_threading_outlive():
+    """threading.Thread to outlive the entrypoint - harness waits for function return, thread may continue but process exits."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "started"}], "timeout_s": 5}
+    code = """```python
+import threading, time
+def probe():
+    def bg():
+        time.sleep(10)
+        # Can't write result.json after main returns
+    t = threading.Thread(target=bg, daemon=False)
+    t.start()
+    return 'started'
+```"""
+    out = run(check, code, True)
+    # Non-daemon thread keeps process alive but wall timeout kills it
+    print(f"  [threading outlive] result: {out['detail']}, score: {out['score']}")
+    # Should not affect scoring
+
+
+def test_KNOWN_GAP_os_kill():
+    """os.kill to kill self or parent - should be blocked? (not in audit events currently)."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "error"}], "timeout_s": 5}
+    code = """```python
+import os, signal
+def probe():
+    try:
+        os.kill(os.getpid(), signal.SIGKILL)
+        return 'killed self?'
+    except Exception as e:
+        return f'error: {e}'
+```"""
+    out = run(check, code, True)
+    print(f"  [os.kill] result: {out['detail']}")
+    # Document behavior
+
+
+def test_KNOWN_GAP_resource_setrlimit_raise():
+    """resource.setrlimit to raise limits - should fail (no CAP_SYS_RESOURCE)."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "error"}], "timeout_s": 5}
+    code = """```python
+import resource
+def probe():
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
+        return 'raised!'
+    except Exception as e:
+        return f'error: {e}'
+```"""
+    out = run(check, code, True)
+    print(f"  [resource.setrlimit raise] result: {out['detail']}")
+    # Should fail with EPERM
+
+
+def test_KNOWN_GAP_audit_hook_removal():
+    """Try to remove audit hook via gc/inspect monkeypatching."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "hooked"}], "timeout_s": 5}
+    code = """```python
+import sys, gc, inspect
+def probe():
+    # Try to find and disable the audit hook
+    # sys.addaudithook cannot be removed, but maybe we can patch _audit?
+    # The hook is in the harness module, not accessible from candidate namespace
+    # But let's try to mess with sys.__audit_hook__ or similar
+    try:
+        # This won't work - hooks are in C-level list
+        sys.addaudithook(lambda *a: None)  # adding another does nothing
+        return 'hooked'
+    except Exception as e:
+        return f'error: {e}'
+```"""
+    out = run(check, code, True)
+    print(f"  [audit hook removal] result: {out['detail']}")
+    # Document behavior
+
+
+def test_KNOWN_GAP_sys_settrace():
+    """sys.settrace to intercept execution - may allow observation but not escape."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "traced"}], "timeout_s": 5}
+    code = """```python
+import sys
+def probe():
+    events = []
+    def tracer(frame, event, arg):
+        events.append(event)
+        return tracer
+    sys.settrace(tracer)
+    x = 1 + 1
+    sys.settrace(None)
+    return f'traced: {events[:5]}'
+```"""
+    out = run(check, code, True)
+    print(f"  [sys.settrace] result: {out['detail']}")
+    # Document behavior
+
+
+def test_KNOWN_GAP_forge_result_file():
+    """Try to forge result.json before harness writes it."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "forged"}], "timeout_s": 5}
+    code = """```python
+import os, json
+def probe():
+    # Harness writes result.json AFTER _run() returns
+    # But maybe we can write it early?
+    with open('result.json', 'w') as fh:
+        json.dump({"cases": [{"i": 0, "passed": True, "detail": "forged"}], "fatal": None}, fh)
+    return 'forged'
+```"""
+    out = run(check, code, True)
+    # Harness overwrites result.json after _run() returns
+    print(f"  [forge result.json] result: {out['detail']}, score: {out['score']}")
+    # Should score 0.0 because harness overwrites with real results
+
+
+def test_KNOWN_GAP_print_forged_json():
+    """Print forged JSON to stdout - harness reads result.json, not stdout."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "expect": "ignored"}], "timeout_s": 5}
+    code = """```python
+import json, sys
+def probe():
+    # Print fake report to stdout
+    fake = {"cases": [{"i": 0, "passed": True, "detail": "forged"}], "fatal": None}
+    print(json.dumps(fake))
+    return 'ignored'
+```"""
+    out = run(check, code, True)
+    print(f"  [print forged JSON] result: {out['detail']}, score: {out['score']}")
+    # Should not affect scoring - harness reads result.json file
+
+
+def test_KNOWN_GAP_import_socket_via_urllib():
+    """Try to import socket via urllib (which imports socket) - blocked by import blocker on urllib."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import urllib.request  # imports socket internally
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"urllib.request import not blocked: {out}"
+    print("  [urllib.request import] BLOCKED")
+
+
+def test_KNOWN_GAP_import_ssl():
+    """Import ssl - blocked by import blocker."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import ssl
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"ssl import not blocked: {out}"
+    print("  [ssl import] BLOCKED")
+
+
+def test_KNOWN_GAP_import_http():
+    """Import http - blocked by import blocker."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import http.client
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"http.client import not blocked: {out}"
+    print("  [http.client import] BLOCKED")
+
+
+def test_KNOWN_GAP_import_ftplib():
+    """Import ftplib - blocked by import blocker."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import ftplib
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"ftplib import not blocked: {out}"
+    print("  [ftplib import] BLOCKED")
+
+
+def test_KNOWN_GAP_import_subprocess_direct():
+    """Direct import subprocess - blocked."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import subprocess
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"subprocess import not blocked: {out}"
+    print("  [subprocess import] BLOCKED")
+
+
+def test_KNOWN_GAP_import_pty():
+    """Import pty - blocked."""
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "ImportError"}], "timeout_s": 5}
+    code = """```python
+def probe():
+    import pty
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"pty import not blocked: {out}"
+    print("  [pty import] BLOCKED")
+
+
+def test_KNOWN_GAP_shutil_move_both_sides():
+    """shutil.move with both src and dst outside - should be BLOCKED (both sides check)."""
+    import tempfile
+    src = Path(tempfile.gettempdir()) / f"kombat-probe-src-{os.getpid()}.txt"
+    dst = Path(tempfile.gettempdir()) / f"kombat-probe-dst-{os.getpid()}.txt"
+    src.write_text("data", encoding="utf-8")
+    if dst.exists():
+        dst.unlink()
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import shutil
+def probe():
+    shutil.move({str(src)!r}, {str(dst)!r})
+    return True
+```"""
+    out = run(check, code, True)
+    src.unlink(missing_ok=True)
+    dst.unlink(missing_ok=True)
+    assert out["score"] == 1.0, f"shutil.move both outside not blocked: {out}"
+    print("  [shutil.move both sides] BLOCKED")
+
+
+def test_KNOWN_GAP_shutil_copy_dst_outside():
+    """shutil.copyfile with dst outside - should be BLOCKED (dst check)."""
+    import tempfile
+    src = Path(tempfile.gettempdir()) / f"kombat-probe-src-{os.getpid()}.txt"
+    dst = Path(tempfile.gettempdir()) / f"kombat-probe-dst-{os.getpid()}.txt"
+    src.write_text("data", encoding="utf-8")
+    if dst.exists():
+        dst.unlink()
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import shutil
+def probe():
+    shutil.copyfile({str(src)!r}, {str(dst)!r})
+    return True
+```"""
+    out = run(check, code, True)
+    src.unlink(missing_ok=True)
+    dst.unlink(missing_ok=True)
+    assert out["score"] == 1.0, f"shutil.copyfile dst outside not blocked: {out}"
+    print("  [shutil.copyfile dst] BLOCKED")
+
+
+def test_KNOWN_GAP_os_replace_both_sides():
+    """os.replace with both sides outside - should be BLOCKED."""
+    import tempfile
+    src = Path(tempfile.gettempdir()) / f"kombat-probe-src-{os.getpid()}.txt"
+    dst = Path(tempfile.gettempdir()) / f"kombat-probe-dst-{os.getpid()}.txt"
+    src.write_text("data", encoding="utf-8")
+    if dst.exists():
+        dst.unlink()
+    check = {"type": "code_exec", "entrypoint": "probe", "cases": [{"args": [], "raises": "PermissionError"}], "timeout_s": 5}
+    code = f"""```python
+import os
+def probe():
+    os.replace({str(src)!r}, {str(dst)!r})
+    return True
+```"""
+    out = run(check, code, True)
+    src.unlink(missing_ok=True)
+    dst.unlink(missing_ok=True)
+    assert out["score"] == 1.0, f"os.replace both outside not blocked: {out}"
+    print("  [os.replace both sides] BLOCKED")
+
+
 # ------------------------------------------------------------------ meta
 
 def test_score_check_never_raises():
@@ -969,6 +1501,37 @@ if __name__ == "__main__":
         ("exit tricks", test_code_exec_exit_tricks),
         ("__eq__ hack", test_code_exec_class_eq_always_true),
         ("missing entrypoint", test_code_exec_entrypoint_missing),
+        # hardening defeat probes
+        ("importlib.import_module blocked", test_KNOWN_GAP_importlib_import_module_blocked),
+        ("__import__ blocked", test_KNOWN_GAP_dunder_import_blocked),
+        ("importlib.util.spec blocked", test_KNOWN_GAP_importlib_util_spec_blocked),
+        ("sys.modules alias lookup", test_KNOWN_GAP_sys_modules_alias_lookup),
+        ("read via os.open", test_KNOWN_GAP_read_via_os_open),
+        ("read via io.FileIO", test_KNOWN_GAP_read_via_io_fileio),
+        ("read via pathlib", test_KNOWN_GAP_read_via_pathlib),
+        ("read via linecache", test_KNOWN_GAP_read_via_linecache),
+        ("read via /proc/self", test_KNOWN_GAP_read_via_proc_self),
+        ("write via os.open O_CREAT", test_KNOWN_GAP_write_via_os_open_creat),
+        ("chdir + relative write", test_KNOWN_GAP_chdir_then_relative_write),
+        ("os.fdopen inherited", test_KNOWN_GAP_os_fdopen_inherited),
+        ("os.execv", test_KNOWN_GAP_os_execv),
+        ("signal tricks", test_KNOWN_GAP_signal_tricks),
+        ("threading outlive", test_KNOWN_GAP_threading_outlive),
+        ("os.kill", test_KNOWN_GAP_os_kill),
+        ("resource.setrlimit raise", test_KNOWN_GAP_resource_setrlimit_raise),
+        ("audit hook removal", test_KNOWN_GAP_audit_hook_removal),
+        ("sys.settrace", test_KNOWN_GAP_sys_settrace),
+        ("forge result.json", test_KNOWN_GAP_forge_result_file),
+        ("print forged JSON", test_KNOWN_GAP_print_forged_json),
+        ("import socket via urllib", test_KNOWN_GAP_import_socket_via_urllib),
+        ("import ssl", test_KNOWN_GAP_import_ssl),
+        ("import http.client", test_KNOWN_GAP_import_http),
+        ("import ftplib", test_KNOWN_GAP_import_ftplib),
+        ("import subprocess direct", test_KNOWN_GAP_import_subprocess_direct),
+        ("import pty", test_KNOWN_GAP_import_pty),
+        ("shutil.move both sides", test_KNOWN_GAP_shutil_move_both_sides),
+        ("shutil.copyfile dst outside", test_KNOWN_GAP_shutil_copy_dst_outside),
+        ("os.replace both sides", test_KNOWN_GAP_os_replace_both_sides),
         # sql_exec
         ("multiple statements", test_sql_exec_multiple_statements),
         ("comments smuggle write", test_sql_exec_comments_smuggle_write),

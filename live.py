@@ -78,6 +78,7 @@ def _idle_live() -> dict:
         "sudden_death": None,
         "winner": None,
         "ko": False,
+        "edge": None,
         "points": {"a": 0, "b": 0},
         "usage": {
             "a": {"cost_usd": 0, "tokens": 0, "latency_s": 0},
@@ -158,6 +159,7 @@ class LiveState:
         self.sudden_death: dict | None = None
         self.winner = None
         self.ko = False
+        self.edge = None
         self.points = {"a": 0.0, "b": 0.0}
         self.usage = {
             "a": {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0},
@@ -368,6 +370,7 @@ class LiveState:
             "sudden_death": _copy_rounds([self.sudden_death])[0] if self.sudden_death else None,
             "winner": self.winner,
             "ko": bool(self.ko),
+            "edge": self.edge,
             "points": dict(self.points),
             "usage": {
                 "a": dict(self.usage["a"]),
@@ -518,18 +521,23 @@ class LiveState:
         if side not in ("a", "b"):
             return self.snapshot()
         slot = self.usage[side]
-        slot["cost_usd"] = round(_num(slot.get("cost_usd")) + _num(cost_usd), 9)
+        if cost_usd is None:
+            slot["cost_usd"] = None
+        elif slot.get("cost_usd") is not None:
+            slot["cost_usd"] = round(_num(slot.get("cost_usd")) + _num(cost_usd), 9)
         slot["tokens"] = int(_num(slot.get("tokens")) + _num(tokens))
         slot["latency_s"] = round(_num(slot.get("latency_s")) + _num(latency_s), 6)
         self._touch()
         return self.snapshot()
 
     @_guard
-    def finish(self, winner=None, ko=False, report_path=None) -> dict:
+    def finish(self, winner=None, ko=False, report_path=None, edge=None) -> dict:
         self.status = "done"
         if winner is not None:
             self.winner = winner
         self.ko = bool(ko)
+        if edge is not None:
+            self.edge = edge
         if report_path is not None:
             self.report_path = str(report_path)
         self._touch()

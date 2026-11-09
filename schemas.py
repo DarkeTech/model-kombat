@@ -40,6 +40,10 @@ KOMBAT_SCOUT = {
                 "type": "integer",
                 "description": "Optional card seed. Default derives from the input text, so the same input gives the same card.",
             },
+            "persist": {
+                "type": "boolean",
+                "description": "Store the built card for later use by kombat_run_fight. Default true; pass false for a read-only scout with no cards.json write.",
+            },
         },
         "required": [],
     },
@@ -55,7 +59,9 @@ KOMBAT_RUN_FIGHT = {
         "suite. Rate limits (429) are waited out within a per-fight budget and errored "
         "(task, fighter) pairs are retried a bounded number of times; exhausted pairs are "
         "reported as errored (never failed). Requires llm.model_override enabled for this "
-        "plugin. Enforces a spend budget and drives the kanban scoreboard and live state."
+        "plugin. Sudden death is fetched up front and only scored on a points tie. "
+        "Enforces a USD and token spend budget, prices tokens when the host gives no cost "
+        "(unknown models are 'n/a', never $0), and drives the kanban scoreboard and live state."
     ),
     "parameters": {
         "type": "object",
@@ -74,6 +80,7 @@ KOMBAT_RUN_FIGHT = {
             "temperature": {"type": "number", "description": "Sampling temperature for both fighters. Default 0 for fairness."},
             "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default 2000."},
             "budget_usd": {"type": "number", "description": "Stop the fight once cumulative estimated cost exceeds this. Default 2.0."},
+            "budget_tokens": {"type": "integer", "description": "Stop the fight once cumulative input+output tokens exceed this (works even when prices are unknown). Default 400000."},
             "timeout_s": {"type": "number", "description": "Per-call timeout in seconds. Default 180."},
             "max_rate_wait_s": {"type": "number", "description": "Longest single 429 wait in seconds (default from settings, 120)."},
             "rate_wait_budget_s": {"type": "number", "description": "Total 429 wait budget for the whole fight in seconds. Default 240."},
@@ -120,7 +127,9 @@ KOMBAT_SCORE_ANSWERS = {
         "model-written code against reference checks). Points are weighted by round "
         "(Warm-up 1, Main Event 2, Championship 3); ties after the Championship go to "
         "sudden death; passing every Championship task while the opponent fails one is a "
-        "K.O. Errored/skipped tasks are excluded from points. Returns winner, points, KOs, "
+        "K.O. Errored/skipped tasks are excluded from points. A still-tied fight returns "
+        "winner 'draw' plus an `edge` object ({fighter, metric, reason, label}) that is an "
+        "efficiency edge only — never a win. Returns winner, points, KOs, "
         "and the HTML versus scorecard path, and appends the fight to history. "
         "Use after a run tool, or whenever the user pastes two answer sets to compare."
     ),
@@ -189,12 +198,15 @@ KOMBAT_REMATCH_ERRORS = {
 KOMBAT_RECOMMEND = {
     "name": "kombat_recommend",
     "description": (
-        "Ladder-backed recommendation: rank models per lane from scored fight history and "
-        "return the knockout pick (pick, margin, confidence, fights, cost per point, runner-up, why). "
-        "Pass a lane, or input text / a kanban card to classify the lane first. "
-        "{\"board\": true} scouts every open card on the active board, recommends per top lane, "
-        "and writes recommendations.json keyed by kanban task id for board badges. "
-        "{\"ladder\": true} returns the raw per-lane Elo ladder."
+        "Ladder-backed recommendation. Pass `card` as a stored scout card id "
+        "('card-...'), a scouted card object, or a kanban task id: a scout card "
+        "returns a pick PER lane plus one overall pick (highest summed weighted Elo "
+        "margin = sum over lanes of lane_weight * elo), while a kanban task id is "
+        "classified into its top lane first. Pass a lane, or input text. "
+        "{\"board\": true} scouts every open card on the active board and writes "
+        "recommendations.json keyed by kanban task id. {\"ladder\": true} returns "
+        "the raw per-lane Elo ladder. cost_per_point is 'n/a' when a model has no "
+        "known price."
     ),
     "parameters": {
         "type": "object",
@@ -210,8 +222,8 @@ KOMBAT_RECOMMEND = {
                 "description": "Free text to classify into a lane when no lane is given.",
             },
             "card": {
-                "type": "string",
-                "description": "Kanban task id to classify (reads it with `hermes kanban show --json`).",
+                "anyOf": [{"type": "string"}, {"type": "object"}],
+                "description": "Stored scout card id ('card-...'), a scouted card object, or a kanban task id (resolved in that order).",
             },
             "board": {
                 "type": "boolean",

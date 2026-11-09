@@ -130,6 +130,150 @@
         ]
       },
       "reference": "June 10, 2026, Jane Doe, $500,000"
+    },
+    {
+      "id": "recall-007",
+      "lane": "recall",
+      "difficulty": 3,
+      "title": "Recall grant clinic details",
+      "prompt": "Read the passage and answer only from the passage.\n\n---\nThe regional health foundation announced its spring round of equipment grants on Tuesday, naming two mid-sized clinics that will share a combined budget of just under one million dollars. Northgate Clinic will receive $485,000 toward a new digital imaging suite. Its award letter was issued on March 18, 2026, and the clinic's project is led by Dr. Elena Vasquez, its director of radiology. Foundation officials said the imaging suite should cut average scan waiting times from eleven days to under three days, a change administrators expect to ease emergency department backlogs. Southgate Clinic, just across the river, will receive $485,500 for a similar but smaller upgrade to its ultrasound wing. Its award letter was issued one day later, on March 19, 2026, and its project is led by Dr. Elena Voss, the clinic's chief of obstetrics. Both clinics must spend their grants within eighteen months and report progress to the foundation every quarter. The foundation's board stressed that the two awards were deliberately matched in size so that neither clinic could claim it had been favored. Northgate's imaging suite will be installed in the renovated east wing, while Southgate's ultrasound equipment will go into the second floor. Procurement for both projects begins next month, and each clinic has already shortlisted two vendors. Foundation staff will audit invoices at the six-month mark to confirm the money is being used as planned. Neither clinic is allowed to redirect funds without written approval from the grants committee. The foundation expects both projects to be complete before the end of next year.\n---\n\nAnswer: (1) Which clinic received the $485,000 grant? (2) When was that clinic's award letter issued? (3) Who leads that clinic's project, and how much was the grant?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "Northgate Clinic",
+            "Northgate"
+          ],
+          [
+            "$485,000",
+            "485000 dollars",
+            "485 thousand dollars"
+          ],
+          [
+            "March 18, 2026",
+            "18 March 2026",
+            "03/18/2026"
+          ],
+          [
+            "Dr. Elena Vasquez",
+            "Elena Vasquez"
+          ]
+        ]
+      },
+      "reference": "Northgate Clinic, $485,000, March 18, 2026, Dr. Elena Vasquez",
+      "common_wrong": "Southgate Clinic, $485,000, March 19, 2026, Dr. Elena Voss"
+    },
+    {
+      "id": "recall-008",
+      "lane": "recall",
+      "difficulty": 3,
+      "title": "Recall station departure details",
+      "prompt": "Read the passage and answer only from the passage.\n\n---\nThe coastal rail authority published its revised spring timetable on Monday, adding a morning service that links two harbour-side stations. Harborview Station will be served by a new express departure at 08:40, leaving from Platform 7. The service runs under timetable number IC 217 and operates on March 4, 2026, the first day of the revised schedule, with an onward connection to the airport line at Midland Junction. Tickets for the 08:40 departure are already on sale, and the authority expects the train to carry about 340 passengers, mostly commuters heading for the central business district. Riverside Station, a smaller stop two kilometres to the south, will gain its own morning departure at 08:04 from Platform 9, running under timetable number IC 271 on March 14, 2026, ten days later. The Riverside service is aimed at shoppers and hospital visitors, and the authority forecasts roughly 180 passengers for its first run. Both new services stop only at intermediate stations on request, and both will be operated by the same class of electric multiple units. The authority said the two departures were scheduled twelve minutes apart at the source to spread demand across the morning peak. Passengers are advised that the 08:40 Harborview departure will not stop at Riverside, and the 08:04 Riverside departure will not call at Harborview. Platform staff will be stationed at both stations on the first day of the new timetable to direct passengers to the correct platforms. The authority also reminded travellers that the revised timetable supersedes the previous autumn schedule in its entirety. Printed pocket timetables will be available at kiosks in both stations from next week.\n---\n\nAnswer: (1) Which station, platform and departure time does the IC 217 service have? (2) On which date does that service operate? (3) Which timetable number is the 08:40 departure?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "Harborview Station",
+            "Harborview"
+          ],
+          [
+            "Platform 7",
+            "platform seven",
+            "bay 7"
+          ],
+          [
+            "08:40",
+            "8:40 AM",
+            "eight forty"
+          ],
+          [
+            "March 4, 2026",
+            "4 March 2026",
+            "03/04/2026"
+          ],
+          [
+            "IC 217",
+            "timetable number IC 217",
+            "service IC 217"
+          ]
+        ]
+      },
+      "reference": "Harborview Station, Platform 7, 08:40, March 4, 2026, IC 217",
+      "common_wrong": "Riverside Station, Platform 9, 08:40, March 4, 2026, IC 271"
+    },
+    {
+      "id": "recall-009",
+      "lane": "recall",
+      "difficulty": 3,
+      "title": "Recall scholarship recipient details",
+      "prompt": "Read the passage and answer only from the passage.\n\n---\nThe Meridian Trust announced its annual scholarship awards at a ceremony in the university's main hall on Monday evening. This year's largest award, the Meridian Scholarship, was presented to Priya Natarajan, a graduate student in computational biology at Kestone University. The scholarship is worth $12,500 and was announced on June 2, 2026. Priya's research focuses on predicting protein folding patterns, and the trust said her work could accelerate drug discovery. The runner-up award was the Meridian Fellowship, worth $12,050, presented to Priya Raghavan, a master's student in applied mathematics at Kestrel University. The fellowship was announced on June 20, 2026, eighteen days after the scholarship. Raghavan's research concerns numerical methods for climate modelling, and the trust praised her work on low-cost simulation tools. Both recipients were selected from a shortlist of nine finalists drawn from universities across the region. The trust's selection panel said the two Priyas were separated by a single point in the final scoring, making this year's decision one of the closest in its history. Each award is tenable for one academic year and can be renewed once, subject to satisfactory progress reports. The trust also confirmed that both awards include a travel allowance for conference attendance. Priya Natarajan will use her award to attend two international conferences, while Priya Raghavan plans to spend a term at a partner institution overseas. The trust's director congratulated both recipients and thanked the panel for its careful work. Next year's awards will be announced in the same month, with applications opening in January.\n---\n\nAnswer: (1) Who received the $12,500 award, and from which university? (2) When was that award announced? (3) What is the award called, and how much is it worth?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "Priya Natarajan",
+            "Natarajan"
+          ],
+          [
+            "$12,500",
+            "12500 dollars",
+            "twelve thousand five hundred dollars"
+          ],
+          [
+            "June 2, 2026",
+            "2 June 2026",
+            "06/02/2026"
+          ],
+          [
+            "Kestone University",
+            "Kestone"
+          ],
+          [
+            "Meridian Scholarship",
+            "the Meridian Scholarship"
+          ]
+        ]
+      },
+      "reference": "Priya Natarajan, Kestone University, June 2, 2026, Meridian Scholarship, $12,500",
+      "common_wrong": "Priya Raghavan, Kestrel University, June 2, 2026, Meridian Scholarship, $12,500"
+    },
+    {
+      "id": "recall-010",
+      "lane": "recall",
+      "difficulty": 3,
+      "title": "Recall product recall details",
+      "prompt": "Read the passage and answer only from the passage.\n\n---\nThe safety regulator published two recall notices on Monday covering a batch of torque wrenches manufactured last year. The first notice concerns model TW-1400, manufactured by Calder Toolworks, with serial numbers in the range SN 44-102. The recall was issued on January 27, 2026, and covers 4,200 units sold through hardware retailers between May and November. Calder identified a defect in the calibration spring, which can weaken under repeated use and cause the wrench to under-torque fasteners. The second notice concerns model TW-1401, a closely related variant made at the same factory, with serial numbers in the range SN 44-120. That recall was issued one day later, on January 28, 2026, and covers 4,250 units. The TW-1401 defect involves the calibration pin rather than the spring, and the regulator said the pin can shear under load. Both recalls are precautionary, and the regulator said no injuries have been reported in connection with either model. Owners of affected wrenches are asked to stop using them and to return them to the retailer for a full refund or a replacement from an unaffected batch. Calder Toolworks has set up a dedicated hotline and a claims page on its website for owners to check whether their serial number is affected. The company said it will also notify registered owners by post within two weeks. Retailers are required to display the recall notices at the point of sale until the end of March. The regulator reminded owners that claims must be made within six months of the recall issue date.\n---\n\nAnswer: (1) Which model was recalled on January 27, 2026, and how many units does it cover? (2) Which serial number range does that model cover? (3) Which component is defective in that model, and on which date was its recall issued?",
+      "check": {
+        "type": "phrases",
+        "expected": [
+          [
+            "TW-1400",
+            "model TW-1400",
+            "Tw-1400"
+          ],
+          [
+            "SN 44-102",
+            "serial numbers 44-102",
+            "44-102"
+          ],
+          [
+            "January 27, 2026",
+            "27 January 2026",
+            "01/27/2026"
+          ],
+          [
+            "4,200 units",
+            "4200 units",
+            "four thousand two hundred units"
+          ],
+          [
+            "calibration spring",
+            "the calibration spring"
+          ]
+        ]
+      },
+      "reference": "TW-1400, SN 44-102, January 27, 2026, 4,200 units, calibration spring",
+      "common_wrong": "TW-1401, SN 44-120, January 27, 2026, 4,250 units, calibration pin"
     }
   ]
 }

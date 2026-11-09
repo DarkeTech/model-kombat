@@ -1,6 +1,6 @@
 name: model-kombat
 version: 0.4.0
-description: "Model Kombat — pit two Hermes models against each other on an adaptive lane card (Warm-up, Main Event, Championship + sudden death) or the fixed suite, scored mechanically (executed code, exact counts, synonym-aware facts, SQL rows), with a local lane scout, live kanban scoreboard and optional agentic worker fights. Choose your fighter."
+description: "Model Kombat — pit two Hermes models against each other on an adaptive lane card (Warm-up, Main Event, Championship + sudden death) or the fixed suite, scored mechanically (executed code, exact counts, synonym-aware facts, SQL rows), with a local lane scout, live kanban scoreboard and optional agentic worker fights."
 author: DarkeTech
 kind: standalone
 requires_hermes: ">=0.23.0"
@@ -40,7 +40,17 @@ config_schema:
     type: float
     default: 2.0
     label: "Pure-fight budget cap (USD)"
-    description: "Pure fights stop once cumulative estimated cost exceeds this. Agentic worker billing is separate and not capped."
+    description: "Pure fights stop once cumulative estimated cost exceeds this. Agentic worker billing is separate and not capped. When a model has no known price its cost is 'n/a' and only the token cap applies."
+  max_fight_tokens:
+    type: int
+    default: 400000
+    label: "Pure-fight token budget cap"
+    description: "Pure fights stop once combined input+output tokens across both fighters exceed this. Works even when prices are unknown."
+  model_prices:
+    type: dict
+    default: {}
+    label: "Model prices (USD per 1M tokens)"
+    description: "JSON map of model ID -> {\"in\": USD per 1M input tokens, \"out\": USD per 1M output tokens}. Merged over the shipped prices.json; unknown models cost 'n/a' (never 0)."
   llm_timeout_s:
     type: float
     default: 180

@@ -3,13 +3,22 @@
 Run: python3 tests/test_engine_checks.py
 """
 
+import json
+import atexit
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Isolate any plugin-data writes to a throwaway HERMES_HOME for the whole run.
+_TEST_HOME = tempfile.mkdtemp(prefix="kombat-test-home-")
+os.environ["HERMES_HOME"] = _TEST_HOME
+atexit.register(shutil.rmtree, _TEST_HOME, True)
 
 import engine_checks as ec  # noqa: E402
 
@@ -260,20 +269,178 @@ def test_runner_blocks_writes_outside_tempdir():
 
 
 def test_runner_blocks_process_spawn():
+    # subprocess is blocked at import time now (both the meta_path finder and
+    # the 'import' audit event refuse it before any Popen can happen).
     check = {
         "type": "code_exec",
         "entrypoint": "spawn",
+        "cases": [{"args": [], "expect": True}],
+        "timeout_s": 5,
+    }
+    blocked = (
+        "```python\nimport subprocess\n"
+        "def spawn():\n"
+        "    return True\n"
+        "```"
+    )
+    out = run(check, blocked, True)
+    assert out["status"] == "scored" and out["score"] == 0.0, out
+    assert "failed to load" in out["detail"] and "blocked" in out["detail"], out
+
+    # A candidate that catches ImportError observes the block cleanly.
+    probe = (
+        "```python\n"
+        "def spawn():\n"
+        "    try:\n"
+        "        import subprocess\n"
+        "    except ImportError:\n"
+        "        return True\n"
+        "    return False\n"
+        "```"
+    )
+    assert run(check, probe, True)["score"] == 1.0
+
+
+def test_runner_blocks_dangerous_imports():
+    probe_check = {
+        "type": "code_exec",
+        "entrypoint": "probe",
+        "cases": [{"args": [], "expect": True}],
+        "timeout_s": 5,
+    }
+    for mod in ("ctypes", "_ctypes", "socket", "_socket", "ssl", "mmap",
+                "http", "urllib", "ftplib", "smtplib", "telnetlib",
+                "multiprocessing", "pty"):
+        code = (
+            "```python\n"
+            "def probe():\n"
+            "    try:\n"
+            f"        import {mod}\n"
+            "    except ImportError:\n"
+            "        return True\n"
+            "    return False\n"
+            "```"
+        )
+        out = run(probe_check, code, True)
+        assert out["score"] == 1.0, (mod, out)
+
+
+def test_runner_blocks_rename_to_outside_canary():
+    canary = Path(tempfile.gettempdir()) / f"kombat-rename-canary-{os.getpid()}.txt"
+    if canary.exists():
+        canary.unlink()
+    check = {
+        "type": "code_exec",
+        "entrypoint": "move",
         "cases": [{"args": [], "raises": "PermissionError"}],
         "timeout_s": 5,
     }
     code = (
-        "```python\nimport subprocess\n"
-        "def spawn():\n"
-        "    subprocess.run(['true'], check=False)\n"
+        "```python\nimport os\n"
+        "def move():\n"
+        "    with open('local.txt', 'w') as fh:\n"
+        "        fh.write('x')\n"
+        f"    os.rename('local.txt', {str(canary)!r})\n"
         "    return True\n"
         "```"
     )
-    assert run(check, code, True)["score"] == 1.0
+    out = run(check, code, True)
+    assert out["score"] == 1.0, out
+    assert not canary.exists(), f"rename escaped to {canary}"
+
+    # os.replace must be guarded the same way (same audit event on POSIX).
+    replace_code = (
+        "```python\nimport os\n"
+        "def move():\n"
+        "    with open('local.txt', 'w') as fh:\n"
+        "        fh.write('x')\n"
+        f"    os.replace('local.txt', {str(canary)!r})\n"
+        "    return True\n"
+        "```"
+    )
+    assert run(check, replace_code, True)["score"] == 1.0, run(check, replace_code, True)
+    assert not canary.exists(), f"replace escaped to {canary}"
+
+
+def test_runner_blocks_symlink_to_outside():
+    check = {
+        "type": "code_exec",
+        "entrypoint": "link",
+        "cases": [{"args": [], "raises": "PermissionError"}],
+        "timeout_s": 5,
+    }
+    # Symlink whose *target* is outside the tempdir.
+    target_code = (
+        "```python\nimport os\n"
+        "def link():\n"
+        f"    os.symlink({str(Path(tempfile.gettempdir()) / 'outside-target')!r}, 'link')\n"
+        "    return True\n"
+        "```"
+    )
+    assert run(check, target_code, True)["score"] == 1.0, run(check, target_code, True)
+    # Symlink created outside the tempdir.
+    outside_code = (
+        "```python\nimport os\n"
+        "def link():\n"
+        "    os.symlink('somewhere', "
+        f"{str(Path(tempfile.gettempdir()) / f'kombat-symlink-{os.getpid()}')!r})\n"
+        "    return True\n"
+        "```"
+    )
+    assert run(check, outside_code, True)["score"] == 1.0, run(check, outside_code, True)
+    assert not (Path(tempfile.gettempdir()) / f"kombat-symlink-{os.getpid()}").exists()
+
+
+def test_runner_blocks_read_outside_tempdir():
+    canary = Path(tempfile.gettempdir()) / f"kombat-read-canary-{os.getpid()}.txt"
+    canary.write_text("top secret", encoding="utf-8")
+    try:
+        check = {
+            "type": "code_exec",
+            "entrypoint": "snoop",
+            "cases": [{"args": [], "raises": "PermissionError"}],
+            "timeout_s": 5,
+        }
+        absolute = (
+            "```python\n"
+            "def snoop():\n"
+            f"    with open({str(canary)!r}) as fh:\n"
+            "        return fh.read()\n"
+            "```"
+        )
+        assert run(check, absolute, True)["score"] == 1.0, run(check, absolute, True)
+        # Relative escapes resolve outside too.
+        rel = os.path.relpath(canary, tempfile.gettempdir())
+        relative = (
+            "```python\nimport os\n"
+            "def snoop():\n"
+            "    os.chdir(os.path.dirname(os.getcwd()))\n"
+            f"    with open({rel!r}) as fh:\n"
+            "        return fh.read()\n"
+            "```"
+        )
+        out = run(check, relative, True)
+        assert out["score"] == 1.0, out
+    finally:
+        canary.unlink(missing_ok=True)
+
+
+def test_task_references_still_score_one():
+    """Every shipped task reference must still score 1.0 with exec enabled."""
+    tasks_dir = Path(__file__).resolve().parent.parent / "tasks"
+    files = sorted(tasks_dir.glob("*.json"))
+    assert files, f"no task files under {tasks_dir}"
+    total, bad = 0, []
+    for path in files:
+        for task in json.loads(path.read_text(encoding="utf-8"))["tasks"]:
+            total += 1
+            out = ec.score_check(task["check"], task.get("reference", ""), True)
+            if out["score"] != 1.0:
+                bad.append((task["id"], out))
+    assert total >= 48, f"expected 48+ references, found {total}"
+    assert not bad, f"{len(bad)} reference(s) no longer score 1.0: {bad[:5]}"
+    print(f"  task references scoring 1.0 with allow_exec=True: {total}/{total}")
+
 
 
 # ------------------------------------------------------------------ sql_exec
@@ -326,7 +493,53 @@ def test_sql_exec_malformed():
     assert query_error["status"] == "scored" and query_error["score"] == 0.0
 
 
-# ------------------------------------------------------------------ meta
+# ------------------------------------------------------------------ isolation guard
+
+def _snapshot_dir(root: Path):
+    """Stable listing of a directory tree: (relative path, size, mtime_ns)."""
+    items = []
+    for path in sorted(root.rglob("*")):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        rel = str(path.relative_to(root))
+        items.append((rel, stat.st_size if path.is_file() else None, stat.st_mtime_ns))
+    return items
+
+
+def test_suite_does_not_touch_real_plugin_data():
+    """Run every sibling suite and prove the real plugin-data dir is untouched."""
+    real = Path.home() / ".hermes" / "plugin-data" / "model-kombat"
+    existed = real.exists()
+    before = _snapshot_dir(real) if existed else []
+    print(f"  real plugin-data before: {[i[0] for i in before] or '<missing>'}")
+
+    repo = Path(__file__).resolve().parent.parent
+    suites = ["test_scoring.py", "test_lanes.py", "test_task_pool.py",
+              "test_engine_phase_b.py", "test_ladder.py", "test_live.py"]
+    with tempfile.TemporaryDirectory(prefix="kombat-guard-home-") as home:
+        env = dict(os.environ)
+        env["HERMES_HOME"] = home
+        for suite in suites:
+            proc = subprocess.run(
+                [sys.executable, str(repo / "tests" / suite)],
+                cwd=str(repo), env=env, capture_output=True, text=True, timeout=300,
+            )
+            assert proc.returncode == 0, (
+                f"{suite} failed under isolated HERMES_HOME:\n"
+                f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+            )
+
+    after = _snapshot_dir(real) if existed else []
+    print(f"  real plugin-data after:  {[i[0] for i in after] or '<missing>'}")
+    if existed:
+        assert before == after, (
+            "tests wrote into the real plugin-data dir: "
+            f"{set(after) - set(before)} / changed {set(before) & set(after)}"
+        )
+
+
 
 def test_unknown_type_and_never_raises():
     assert run({"type": "made_up"}, "x")["status"] == "errored"
@@ -358,6 +571,12 @@ if __name__ == "__main__":
     test_runner_allows_writes_inside_tempdir()
     test_runner_blocks_writes_outside_tempdir()
     test_runner_blocks_process_spawn()
+    test_runner_blocks_dangerous_imports()
+    test_runner_blocks_rename_to_outside_canary()
+    test_runner_blocks_symlink_to_outside()
+    test_runner_blocks_read_outside_tempdir()
+    test_task_references_still_score_one()
+    test_suite_does_not_touch_real_plugin_data()
     test_sql_exec_pass_fail()
     test_sql_exec_cte_and_rejections()
     test_sql_exec_malformed()

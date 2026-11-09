@@ -136,6 +136,93 @@
         ]
       },
       "reference": "I think we should go to the park tomorrow morning. What do you want to do and see there today?"
+    },
+    {
+      "id": "instruction-007",
+      "lane": "instruction",
+      "difficulty": 3,
+      "title": "Six constraints 3 sentences 25 words",
+      "prompt": "Write a summary of a research paper. Constraints:\\n- Exactly 3 sentences\\n- Exactly 25 words total\\n- Must start with \\\"The study\\\"\\n- Must end with a period\\n- Must contain the phrase \\\"significant improvement\\\"\\n- Do not use the words: amazing, best, incredible, perfect, wonderful",
+      "check": {
+        "type": "constraints",
+        "sentences": 3,
+        "words": {
+          "min": 25,
+          "max": 25
+        },
+        "starts_with": "The study",
+        "ends_with": ".",
+        "contains": [
+          "significant improvement"
+        ],
+        "banned": [
+          "amazing",
+          "best",
+          "incredible",
+          "perfect",
+          "wonderful"
+        ]
+      },
+      "reference": "The study demonstrated significant improvement in participant performance after the intervention. Results were statistically meaningful for future applications. Researchers recommend further investigation into long-term effects.",
+      "common_wrong": "The study showed significant improvement in participant performance after the intervention. Results were statistically meaningful for future applications. Researchers recommend further investigation into long-term effects"
+    },
+    {
+      "id": "instruction-008",
+      "lane": "instruction",
+      "difficulty": 3,
+      "title": "Four sentences 30 words",
+      "prompt": "Write a concise analysis of experimental results. Constraints:\\n- Exactly 4 sentences\\n- Exactly 30 words total\\n- Must start with \\\\\\\"In conclusion\\\\\\\"\\n- Must end with a period\\n- Must contain the phrase \\\\\\\"future research\\\\\\\"\\n- Do not use the words: amazing, best, incredible, perfect, wonderful",
+      "check": {
+        "type": "constraints",
+        "sentences": 4,
+        "words": {
+          "min": 30,
+          "max": 30
+        },
+        "starts_with": "In conclusion",
+        "ends_with": ".",
+        "contains": [
+          "future research"
+        ],
+        "banned": [
+          "amazing",
+          "best",
+          "incredible",
+          "perfect",
+          "wonderful"
+        ]
+      },
+      "reference": "In conclusion, the results show a positive trend. Further analysis is needed to understand mechanisms. Future research should focus on long-term effects. Applications are significant and very promising for practice.",
+      "common_wrong": "In summary, the results show a positive trend. Further analysis is needed to understand mechanisms. Future research should focus on long-term effects. Applications are significant and very promising for practice."
+    },
+    {
+      "id": "instruction-009",
+      "lane": "instruction",
+      "difficulty": 3,
+      "title": "Two sentences 20 words",
+      "prompt": "Write a brief conclusion of a study. Constraints:\\n- Exactly 2 sentences\\n- Exactly 20 words total\\n- Must start with \\\\\\\"The results\\\\\\\"\\n- Must end with a period\\n- Must contain the phrase \\\\\\\"statistically significant\\\\\\\"\\n- Do not use the words: amazing, best, incredible, perfect, wonderful",
+      "check": {
+        "type": "constraints",
+        "sentences": 2,
+        "words": {
+          "min": 20,
+          "max": 20
+        },
+        "starts_with": "The results",
+        "ends_with": ".",
+        "contains": [
+          "statistically significant"
+        ],
+        "banned": [
+          "amazing",
+          "best",
+          "incredible",
+          "perfect",
+          "wonderful"
+        ]
+      },
+      "reference": "The results indicate a statistically significant improvement in performance compared to the control group. Validation with larger samples is recommended.",
+      "common_wrong": "The findings indicate a statistically significant improvement in performance compared to the control group. Validation with larger samples is recommended."
     }
   ]
 }

@@ -90,6 +90,70 @@
         "tol": 0.01
       },
       "reference": "1102.5"
+    },
+    {
+      "id": "reasoning-007",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "Pump filling tank with conversion and leak",
+      "prompt": "A tank holds 480 gallons and already contains 60 gallons. A pump delivers 7.57 litres per minute. Use 1 gallon = 3.785 litres exactly as stated. While filling, a leak drains 0.5 gallons per minute. How many minutes does it take to fill the tank completely? Answer with a single number only: the number of minutes (no units, no formula).",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          280
+        ],
+        "tol": 0.01
+      },
+      "reference": "280",
+      "common_wrong": "210"
+    },
+    {
+      "id": "reasoning-008",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "Probability with replacement, exact decimal",
+      "prompt": "A bag contains 3 red counters and 5 blue counters (8 in total). A counter is drawn at random, replaced, and a second counter is then drawn at random from the full bag. What is the probability that exactly one of the two draws is red? Answer with a single number only: the probability as a decimal (for example 0.46875), with no percent sign.",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          0.46875
+        ],
+        "tol": 1e-05
+      },
+      "reference": "0.46875",
+      "common_wrong": "0.234375"
+    },
+    {
+      "id": "reasoning-009",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "Crew schedule with inclusive dates and weekends",
+      "prompt": "A road crew works on every day from 4 May 2026 through 15 May 2026, inclusive of both the first and last day. On weekdays (Monday to Friday) the crew works 7 hours per day. On Saturdays the crew works 4 hours per day. On Sundays the crew does not work. How many total working hours does the crew work in this period? Answer with a single number only: the total number of hours (no units).",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          74
+        ],
+        "tol": 0.01
+      },
+      "reference": "74",
+      "common_wrong": "67"
+    },
+    {
+      "id": "reasoning-010",
+      "lane": "reasoning",
+      "difficulty": 3,
+      "title": "Compound percentage changes",
+      "prompt": "An investment starts at 24,000 dollars. In year 1 it increases by 18 percent. In year 2 it then decreases by 12.5 percent. In year 3 it then increases by 10 percent. Each percentage change applies to the value at the start of that year. What is the final value in dollars? Answer with a single number only: the final value in dollars (no dollar sign, no commas).",
+      "check": {
+        "type": "numeric",
+        "expected": [
+          27258
+        ],
+        "tol": 0.01
+      },
+      "reference": "27258",
+      "common_wrong": "27720"
     }
   ]
 }

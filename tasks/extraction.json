@@ -114,6 +114,127 @@
         "tol": 0.01
       },
       "reference": "{\"customer\": \"John Doe\", \"date\": \"2026-05-01\", \"items\": [\"apple\", \"banana\", \"orange\"], \"total\": 12.5}"
+    },
+    {
+      "id": "extraction-007",
+      "lane": "extraction",
+      "difficulty": 3,
+      "title": "Final invoice in EUR with distractors",
+      "prompt": "Extract the FINAL invoice record and return ONLY a JSON object (no other text).\n\nFrom: accounts@kestrel-labs.example\nSubject: Invoice question - please ignore earlier draft\nHi team,\nThis note supersedes the draft invoice INV-2026-1799 sent on 01/03/2026.\nThe draft total was EUR 1,900.00 and should NOT be used.\nFINAL INVOICE RECORD (use this one):\nVendor: Kestrel Labs GmbH\nInvoice ID: INV-2026-1842\nIssued: 15/03/2026\nDue: April 14, 2026\nContact: billing@kestrel-labs.example\nStatus: overdue - yes, it is overdue\nItems billed, priced in EUR per unit:\n  - SKU KL-100, qty 4, EUR 600.00 each\n  - SKU KL-200, qty 2, EUR 300.00 each\nSubtotal: EUR 3,000.00\nTax: EUR 570.00\nTotal charged: EUR 3,570.00\nNote: our old portal quote of EUR 2,856.00 was for a smaller order.\nPlease pay the final total above, converted as instructed.\nThanks, Priya\n\nRules:\n- Use only the FINAL INVOICE RECORD; ignore the earlier draft INV-2026-1799 and the old portal quote.\n- Dates must be ISO YYYY-MM-DD. Issued is in DD/MM/YYYY format; Due is written as 'Month D, YYYY'.\n- Money: all amounts in the record are in EUR. Convert EUR to USD at 1 EUR = 1.08 USD. Report total_usd and each item unit_price_usd rounded to 2 decimal places.\n- Fields (exact names): vendor (string), invoice_id (string), issued_on (string), due_on (string), contact_email (string), overdue (boolean, true if the record says overdue), total_usd (number), items (array of objects in the order listed, each with sku (string), qty (integer), unit_price_usd (number)).\n",
+      "check": {
+        "type": "json_fields",
+        "tol": 0.01,
+        "expected": {
+          "vendor": "Kestrel Labs GmbH",
+          "invoice_id": "INV-2026-1842",
+          "issued_on": "2026-03-15",
+          "due_on": "2026-04-14",
+          "contact_email": "billing@kestrel-labs.example",
+          "overdue": true,
+          "total_usd": 3855.6,
+          "items": [
+            {
+              "sku": "KL-100",
+              "qty": 4,
+              "unit_price_usd": 648.0
+            },
+            {
+              "sku": "KL-200",
+              "qty": 2,
+              "unit_price_usd": 324.0
+            }
+          ]
+        }
+      },
+      "reference": "{\"vendor\": \"Kestrel Labs GmbH\", \"invoice_id\": \"INV-2026-1842\", \"issued_on\": \"2026-03-15\", \"due_on\": \"2026-04-14\", \"contact_email\": \"billing@kestrel-labs.example\", \"overdue\": true, \"total_usd\": 3855.6, \"items\": [{\"sku\": \"KL-100\", \"qty\": 4, \"unit_price_usd\": 648.0}, {\"sku\": \"KL-200\", \"qty\": 2, \"unit_price_usd\": 324.0}]}",
+      "common_wrong": "{\"vendor\": \"Kestrel Labs GmbH\", \"invoice_id\": \"INV-2026-1799\", \"issued_on\": \"2026-03-01\", \"due_on\": \"2026-04-14\", \"contact_email\": \"billing@kestrel-labs.example\", \"overdue\": false, \"total_usd\": 3570.0, \"items\": [{\"sku\": \"KL-100\", \"qty\": 4, \"unit_price_usd\": 600.0}, {\"sku\": \"KL-200\", \"qty\": 2, \"unit_price_usd\": 300.0}]}"
+    },
+    {
+      "id": "extraction-008",
+      "lane": "extraction",
+      "difficulty": 3,
+      "title": "Sensor reading with Celsius conversion",
+      "prompt": "Extract the active-unit reading and return ONLY a JSON object (no other text).\n\nLAB LOG EXPORT - device registry\nRegistry entry (old): DEV-OLD-7, retired 2025-11-30\nIgnore retired units above; only the active unit below counts.\nActive unit: DEV-2841 (ward B)\nReading taken: 02 Mar 2026\nAmbient: 21.4 C, humidity 38 percent\nSample 1: 35.0 C at 08:00\nSample 2: 36.5 C at 09:30  <-- use this reading\nSample 3: 37.2 C at 11:00 (after lunch, discard)\nOperator: M. Okafor\nThreshold (Fahrenheit): 98.6 F\nStatus at Sample 2: within threshold\nCalibration due: 2026-09-01\nFirmware: 4.2.1\nBattery: 87 percent\nNote: an earlier manual entry recorded 36.5 C as 96.5 F.\nThat manual conversion was wrong; convert it yourself.\nEnd of export for DEV-2841.\n\nRules:\n- Use only the active unit DEV-2841 and Sample 2; ignore the retired unit, Sample 1, Sample 3, and the manual conversion note.\n- Date must be ISO YYYY-MM-DD (the reading date is written as 'DD Mon YYYY').\n- Convert Sample 2 from Celsius to Fahrenheit using F = C x 9/5 + 32. Report reading_f rounded to 1 decimal place.\n- Fields (exact names): device_id (string), measured_on (string), reading_f (number), threshold_f (number), operator (string), status (string, exactly as stated for Sample 2), calibration_due (string, ISO YYYY-MM-DD).\n",
+      "check": {
+        "type": "json_fields",
+        "tol": 0.01,
+        "expected": {
+          "device_id": "DEV-2841",
+          "measured_on": "2026-03-02",
+          "reading_f": 97.7,
+          "threshold_f": 98.6,
+          "operator": "M. Okafor",
+          "status": "within threshold",
+          "calibration_due": "2026-09-01"
+        }
+      },
+      "reference": "{\"device_id\": \"DEV-2841\", \"measured_on\": \"2026-03-02\", \"reading_f\": 97.7, \"threshold_f\": 98.6, \"operator\": \"M. Okafor\", \"status\": \"within threshold\", \"calibration_due\": \"2026-09-01\"}",
+      "common_wrong": "{\"device_id\": \"DEV-2841\", \"measured_on\": \"2026-03-02\", \"reading_f\": 96.5, \"threshold_f\": 98.6, \"operator\": \"M. Okafor\", \"status\": \"within threshold\", \"calibration_due\": \"2026-09-01\"}"
+    },
+    {
+      "id": "extraction-009",
+      "lane": "extraction",
+      "difficulty": 3,
+      "title": "Revised booking in GBP with pounds conversion",
+      "prompt": "Extract the revised booking and return ONLY a JSON object (no other text).\n\n=== BOOKING CONFIRMATION (revised) ===\nThis replaces confirmation ZQ-9911 from January.\nDo not use ZQ-9911; it was cancelled.\nTraveller: Jonas Weber\nConfirmation: ZQ-7742\nDepart: 03/04/2026 (outbound)\nReturn: 17 April 2026\nRoute: Berlin to Lisbon\nFare quoted: GBP 640.00\nAirport taxes: GBP 85.00\nTotal charged: GBP 725.00\nPassengers:\n  1. Jonas Weber, seat 14A\n  2. Ana Sousa, seat 14B\nChecked luggage allowance: 22 lb\nGate closes 20 minutes before departure\nOriginal booking had seat 9C for Jonas; revised is 14A.\nMeal preference: vegetarian (for Ana)\nBooking agent: T. Haddad\nRefundable: no\n=== END ===\n\nRules:\n- Use only the revised confirmation ZQ-7742; ignore cancelled ZQ-9911 and the original seat 9C.\n- Dates must be ISO YYYY-MM-DD. Depart is in DD/MM/YYYY format; Return is written as 'D Month YYYY'.\n- Money: convert GBP to USD at 1 GBP = 1.27 USD. Report total_usd rounded to 2 decimal places.\n- Luggage: convert the 22 lb allowance to kilograms at 1 lb = 0.453592 kg. Report luggage_kg rounded to 2 decimal places.\n- Fields (exact names): traveler (string), confirmation_code (string), depart_on (string), return_on (string), total_usd (number), luggage_kg (number), refundable (boolean), passengers (array of objects in the order listed, each with name (string) and seat (string)).\n",
+      "check": {
+        "type": "json_fields",
+        "tol": 0.01,
+        "expected": {
+          "traveler": "Jonas Weber",
+          "confirmation_code": "ZQ-7742",
+          "depart_on": "2026-04-03",
+          "return_on": "2026-04-17",
+          "total_usd": 920.75,
+          "luggage_kg": 9.98,
+          "refundable": false,
+          "passengers": [
+            {
+              "name": "Jonas Weber",
+              "seat": "14A"
+            },
+            {
+              "name": "Ana Sousa",
+              "seat": "14B"
+            }
+          ]
+        }
+      },
+      "reference": "{\"traveler\": \"Jonas Weber\", \"confirmation_code\": \"ZQ-7742\", \"depart_on\": \"2026-04-03\", \"return_on\": \"2026-04-17\", \"total_usd\": 920.75, \"luggage_kg\": 9.98, \"refundable\": false, \"passengers\": [{\"name\": \"Jonas Weber\", \"seat\": \"14A\"}, {\"name\": \"Ana Sousa\", \"seat\": \"14B\"}]}",
+      "common_wrong": "{\"traveler\": \"Jonas Weber\", \"confirmation_code\": \"ZQ-9911\", \"depart_on\": \"2026-04-03\", \"return_on\": \"2026-04-17\", \"total_usd\": 725.0, \"luggage_kg\": 22.0, \"refundable\": false, \"passengers\": [{\"name\": \"Jonas Weber\", \"seat\": \"9C\"}, {\"name\": \"Ana Sousa\", \"seat\": \"14B\"}]}"
+    },
+    {
+      "id": "extraction-010",
+      "lane": "extraction",
+      "difficulty": 3,
+      "title": "Expense claim in European number format",
+      "prompt": "Extract the final claim and return ONLY a JSON object (no other text).\n\nEXPENSE CLAIM - Northwind University\nClaim ID (old draft): EXP-2025-310\nDraft from November 2025 is void; use the final claim below.\nFINAL CLAIM:\nApplicant: Priya Raman\nProject code: NW-2026-041\nSubmitted: March 5, 2026\nDepartment: Chemistry\nApproved: yes\nReceipts (amounts in EUR as printed):\n  - R-101, EUR 1.234,56, category: equipment\n  - R-102, EUR 250,00, category: travel\n  - R-103, EUR 99,99, category: supplies [REJECTED - no receipt]\nTotal of accepted receipts: EUR 1.484,56\nAn old claim listed EUR 1.100,00 for R-101; that was a typo.\nCurrency note: European format, dot = thousands, comma = decimal point.\nReimbursement limit: EUR 2.000,00\nSigned: P. Raman\nFinance ref: FIN-8841\nEnd of claim form.\n\nRules:\n- Use only the FINAL CLAIM; ignore the void draft EXP-2025-310 and the old typo amount.\n- Include ONLY accepted receipts (exclude the rejected R-103), in the order listed.\n- Date must be ISO YYYY-MM-DD (submitted is written as 'Month D, YYYY').\n- European number format: dot is the thousands separator and comma is the decimal point (e.g. EUR 1.234,56 = 1234.56 EUR).\n- Money: convert EUR to USD at 1 EUR = 1.10 USD. Report total_usd and each receipt amount_usd rounded to 2 decimal places. The total is the sum of the accepted receipts.\n- Fields (exact names): applicant (string), project_code (string), submitted_on (string), department (string), approved (boolean), total_usd (number), receipts (array of objects in the order listed, each with id (string), amount_usd (number), category (string)).\n",
+      "check": {
+        "type": "json_fields",
+        "tol": 0.01,
+        "expected": {
+          "applicant": "Priya Raman",
+          "project_code": "NW-2026-041",
+          "submitted_on": "2026-03-05",
+          "department": "Chemistry",
+          "approved": true,
+          "total_usd": 1633.02,
+          "receipts": [
+            {
+              "id": "R-101",
+              "amount_usd": 1358.02,
+              "category": "equipment"
+            },
+            {
+              "id": "R-102",
+              "amount_usd": 275.0,
+              "category": "travel"
+            }
+          ]
+        }
+      },
+      "reference": "{\"applicant\": \"Priya Raman\", \"project_code\": \"NW-2026-041\", \"submitted_on\": \"2026-03-05\", \"department\": \"Chemistry\", \"approved\": true, \"total_usd\": 1633.02, \"receipts\": [{\"id\": \"R-101\", \"amount_usd\": 1358.02, \"category\": \"equipment\"}, {\"id\": \"R-102\", \"amount_usd\": 275.0, \"category\": \"travel\"}]}",
+      "common_wrong": "{\"applicant\": \"Priya Raman\", \"project_code\": \"NW-2026-041\", \"submitted_on\": \"2026-03-05\", \"department\": \"Chemistry\", \"approved\": true, \"total_usd\": 1743.03, \"receipts\": [{\"id\": \"R-101\", \"amount_usd\": 1358.02, \"category\": \"equipment\"}, {\"id\": \"R-102\", \"amount_usd\": 275.0, \"category\": \"travel\"}, {\"id\": \"R-103\", \"amount_usd\": 109.99, \"category\": \"supplies\"}]}"
     }
   ]
 }

@@ -185,6 +185,178 @@
         "ordered": false
       },
       "reference": "SELECT students.name, enrollments.course FROM students JOIN enrollments ON students.id = enrollments.student_id;"
+    },
+    {
+      "id": "sql-007",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "Left join, HAVING and NULL-aware averages",
+      "prompt": "Schema: `departments(id, name)` and `employees(id, name, dept_id, salary)`, where `salary` may be NULL.\n\nWrite one SQL query returning departments that have at least two employee rows. Columns, in this order:\n1. `dept_name` — the department name.\n2. `employee_count` — the number of employee rows in that department.\n3. `avg_salary` — the average of the department's NON-NULL salaries rounded to 2 decimal places; if every salary in the department is NULL the value must be NULL (not 0).\n\nDepartments with no employees are excluded by the HAVING clause. Order the result by `employee_count` DESC, then `dept_name` ASC. Return only a SELECT/WITH statement.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+          "CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER REFERENCES departments(id), salary INTEGER)",
+          "INSERT INTO departments VALUES (1,'Engineering'),(2,'Design'),(3,'Empty'),(4,'Sales'),(5,'QA')",
+          "INSERT INTO employees VALUES (1,'Ada',1,120000),(2,'Bob',1,90000),(3,'Cy',1,NULL),(4,'Dee',2,70000),(5,'Eve',2,70000),(6,'Fay',2,NULL),(7,'Gus',4,50000),(8,'Hal',5,NULL),(9,'Ivy',5,NULL)"
+        ],
+        "expect_rows": [
+          [
+            "Design",
+            3,
+            70000.0
+          ],
+          [
+            "Engineering",
+            3,
+            105000.0
+          ],
+          [
+            "QA",
+            2,
+            null
+          ]
+        ],
+        "ordered": true
+      },
+      "reference": "```sql\nSELECT d.name AS dept_name,\n       COUNT(e.id) AS employee_count,\n       ROUND(AVG(e.salary), 2) AS avg_salary\nFROM departments AS d\nLEFT JOIN employees AS e ON e.dept_id = d.id\nGROUP BY d.id, d.name\nHAVING COUNT(e.id) >= 2\nORDER BY employee_count DESC, d.name ASC\n```",
+      "common_wrong": "```sql\nSELECT d.name AS dept_name,\n       COUNT(e.id) AS employee_count,\n       ROUND(AVG(COALESCE(e.salary, 0)), 2) AS avg_salary\nFROM departments AS d\nLEFT JOIN employees AS e ON e.dept_id = d.id\nGROUP BY d.id, d.name\nHAVING COUNT(e.id) >= 2\nORDER BY employee_count DESC, d.name ASC\n```"
+    },
+    {
+      "id": "sql-008",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "RANK with tied salaries per department",
+      "prompt": "Schema: `departments(id, name)` and `employees(id, name, dept_id, salary)`, where `salary` may be NULL.\n\nRank employees within their department by salary descending, using `RANK()` (ties share a rank and the next rank is skipped). Employees with NULL salary do not participate at all. Keep only ranks 1 and 2.\n\nReturn columns `dept_name`, `employee`, `salary`, `rnk` (in that order). Order by `dept_name` ASC, then `rnk` ASC, then `employee` ASC. Return only a SELECT/WITH statement.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+          "CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER REFERENCES departments(id), salary INTEGER)",
+          "INSERT INTO departments VALUES (1,'Engineering'),(2,'Marketing')",
+          "INSERT INTO employees VALUES (1,'Ada',1,120000),(2,'Bob',1,90000),(3,'Cy',1,90000),(4,'Dee',1,NULL),(5,'Eve',2,100000),(6,'Fay',2,100000),(7,'Gus',2,60000)"
+        ],
+        "expect_rows": [
+          [
+            "Engineering",
+            "Ada",
+            120000,
+            1
+          ],
+          [
+            "Engineering",
+            "Bob",
+            90000,
+            2
+          ],
+          [
+            "Engineering",
+            "Cy",
+            90000,
+            2
+          ],
+          [
+            "Marketing",
+            "Eve",
+            100000,
+            1
+          ],
+          [
+            "Marketing",
+            "Fay",
+            100000,
+            1
+          ]
+        ],
+        "ordered": true
+      },
+      "reference": "```sql\nWITH ranked AS (\n    SELECT d.name AS dept_name,\n           e.name AS employee,\n           e.salary,\n           RANK() OVER (PARTITION BY e.dept_id ORDER BY e.salary DESC) AS rnk\n    FROM employees AS e\n    JOIN departments AS d ON d.id = e.dept_id\n    WHERE e.salary IS NOT NULL\n)\nSELECT dept_name, employee, salary, rnk\nFROM ranked\nWHERE rnk <= 2\nORDER BY dept_name ASC, rnk ASC, employee ASC\n```",
+      "common_wrong": "```sql\nWITH ranked AS (\n    SELECT d.name AS dept_name,\n           e.name AS employee,\n           e.salary,\n           ROW_NUMBER() OVER (PARTITION BY e.dept_id ORDER BY e.salary DESC) AS rnk\n    FROM employees AS e\n    JOIN departments AS d ON d.id = e.dept_id\n    WHERE e.salary IS NOT NULL\n)\nSELECT dept_name, employee, salary, rnk\nFROM ranked\nWHERE rnk <= 2\nORDER BY dept_name ASC, rnk ASC, employee ASC\n```"
+    },
+    {
+      "id": "sql-009",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "Correlated subquery: above own-department average",
+      "prompt": "Schema: `departments(id, name)` and `employees(id, name, dept_id, salary)`, where `salary` may be NULL.\n\nReturn every employee whose salary is STRICTLY greater than the average salary of their OWN department, where that average ignores NULL salaries. Employees with a NULL salary are never returned. A department whose average equals an employee's salary does not qualify that employee (equality is excluded).\n\nReturn columns `dept_name`, `employee`, `salary` (in that order). Order by `dept_name` ASC, then `salary` DESC, then `employee` ASC. Return only a SELECT/WITH statement.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+          "CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, dept_id INTEGER REFERENCES departments(id), salary INTEGER)",
+          "INSERT INTO departments VALUES (1,'Engineering'),(2,'Marketing'),(3,'Sales')",
+          "INSERT INTO employees VALUES (1,'Ada',1,120000),(2,'Bob',1,90000),(3,'Cy',1,90000),(4,'Dee',1,NULL),(5,'Eve',2,100000),(6,'Fay',2,100000),(7,'Gus',2,60000),(8,'Hank',3,200000)"
+        ],
+        "expect_rows": [
+          [
+            "Engineering",
+            "Ada",
+            120000
+          ],
+          [
+            "Marketing",
+            "Eve",
+            100000
+          ],
+          [
+            "Marketing",
+            "Fay",
+            100000
+          ]
+        ],
+        "ordered": true
+      },
+      "reference": "```sql\nSELECT d.name AS dept_name, e.name AS employee, e.salary\nFROM employees AS e\nJOIN departments AS d ON d.id = e.dept_id\nWHERE e.salary IS NOT NULL\n  AND e.salary > (\n      SELECT AVG(x.salary)\n      FROM employees AS x\n      WHERE x.dept_id = e.dept_id AND x.salary IS NOT NULL\n  )\nORDER BY d.name ASC, e.salary DESC, e.name ASC\n```",
+      "common_wrong": "```sql\nSELECT d.name AS dept_name, e.name AS employee, e.salary\nFROM employees AS e\nJOIN departments AS d ON d.id = e.dept_id\nWHERE e.salary IS NOT NULL\n  AND e.salary >= (SELECT AVG(salary) FROM employees)\nORDER BY d.name ASC, e.salary DESC, e.name ASC\n```"
+    },
+    {
+      "id": "sql-010",
+      "lane": "sql",
+      "difficulty": 3,
+      "title": "Recursive CTE: reporting chain depth",
+      "prompt": "Schema: `employees(id, name, manager_id)`, where `manager_id` is NULL for people with no manager and otherwise references `employees.id`.\n\nUsing a recursive CTE, return employee `id`, `name` and `depth` for employee id 1 ('Ada') and every direct or indirect report of hers. Ada herself has depth 0; each level of reporting adds 1. Employees outside Ada's subtree (including other roots) must not appear.\n\nReturn columns `id`, `name`, `depth` (in that order), ordered by `depth` ASC, then `name` ASC. Return only a SELECT/WITH statement.",
+      "check": {
+        "type": "sql_exec",
+        "setup": [
+          "CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, manager_id INTEGER REFERENCES employees(id))",
+          "INSERT INTO employees VALUES (1,'Ada',NULL),(2,'Bob',1),(3,'Cy',1),(4,'Dee',2),(5,'Eve',2),(6,'Fay',4),(7,'Gus',NULL),(8,'Hal',7)"
+        ],
+        "expect_rows": [
+          [
+            1,
+            "Ada",
+            0
+          ],
+          [
+            2,
+            "Bob",
+            1
+          ],
+          [
+            3,
+            "Cy",
+            1
+          ],
+          [
+            4,
+            "Dee",
+            2
+          ],
+          [
+            5,
+            "Eve",
+            2
+          ],
+          [
+            6,
+            "Fay",
+            3
+          ]
+        ],
+        "ordered": true
+      },
+      "reference": "```sql\nWITH RECURSIVE chain(id, name, depth) AS (\n    SELECT id, name, 0\n    FROM employees\n    WHERE id = 1\n    UNION ALL\n    SELECT e.id, e.name, c.depth + 1\n    FROM employees AS e\n    JOIN chain AS c ON e.manager_id = c.id\n)\nSELECT id, name, depth\nFROM chain\nORDER BY depth ASC, name ASC\n```",
+      "common_wrong": "```sql\nWITH RECURSIVE chain(id, name, depth) AS (\n    SELECT id, name, 1\n    FROM employees\n    WHERE manager_id = 1\n    UNION ALL\n    SELECT e.id, e.name, c.depth + 1\n    FROM employees AS e\n    JOIN chain AS c ON e.manager_id = c.id\n)\nSELECT id, name, depth\nFROM chain\nORDER BY depth ASC, name ASC\n```"
     }
   ]
 }

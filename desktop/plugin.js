@@ -14,9 +14,10 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 // ---------------------------------------------------------------------------
 // Model Kombat — arcade-fighter live view (SPEC §7/§8).
 // Original 16-bit look via theme vars only (var(--ui-*)); no JSX, no inline
-// colors, no remote assets. Live updates arrive on host.onEvent
-// ('plugin.model-kombat.fight.updated') with a 5 s REST polling fallback; the
-// pane degrades to a plain status message when the backend is off.
+// colors, no remote assets. Live updates arrive on ctx.onEvent
+// ('plugin.model-kombat.fight.updated'; SDK-tracked, disposed on unload) with
+// a 5 s REST polling fallback; the pane degrades to a plain status message
+// when the backend is off.
 // ---------------------------------------------------------------------------
 
 const LIVE_EVENT = 'plugin.model-kombat.fight.updated'
@@ -325,6 +326,45 @@ function backendNote(error) {
   })
 }
 
+// --- wordmark (heading typography only) -------------------------------------
+// Original treatment: thin-outlined monospace caps, letter-spaced, single
+// glow, flanked by a >+< crossed-bars emblem (inline SVG). No drop-shadow
+// stack, no jagged/stencil lettering, no third-party marks.
+
+function wordmarkEmblem(mirror) {
+  return jsx('svg', {
+    width: 36,
+    height: 18,
+    viewBox: '0 0 72 36',
+    'aria-hidden': true,
+    focusable: 'false',
+    style: { flexShrink: 0, transform: mirror ? 'scaleX(-1)' : undefined },
+    children: [
+      jsx('path', { d: 'M4 6 L20 18 L4 30', fill: 'none', stroke: 'var(--ui-accent)', strokeWidth: 4, strokeLinecap: 'square' }),
+      jsx('path', { d: 'M68 6 L52 18 L68 30', fill: 'none', stroke: 'var(--ui-danger)', strokeWidth: 4, strokeLinecap: 'square' }),
+      jsx('path', { d: 'M36 9 V27 M28 18 H44', fill: 'none', stroke: 'var(--ui-text)', strokeWidth: 4, strokeLinecap: 'square' })
+    ]
+  })
+}
+
+function wordmarkText() {
+  return jsxs('span', {
+    style: {
+      fontWeight: 400,
+      letterSpacing: '0.32em',
+      textTransform: 'uppercase',
+      color: 'var(--ui-text)',
+      WebkitTextStroke: '1px var(--ui-accent)',
+      textShadow: '0 0 10px var(--ui-accent)'
+    },
+    children: ['Model ', 'Kombat']
+  })
+}
+
+function wordmarkChildren() {
+  return [wordmarkEmblem(false), wordmarkText(), wordmarkEmblem(true)]
+}
+
 // --- pane -------------------------------------------------------------------
 
 function KombatPane() {
@@ -337,7 +377,7 @@ function KombatPane() {
   }
   if (!live) {
     return jsxs('div', { style: { padding: '12px' }, children: [
-      jsx('div', { style: { fontWeight: 700, color: 'var(--ui-text)' }, children: 'MODEL KOMBAT' }),
+      jsx('div', { style: { fontWeight: 400, color: 'var(--ui-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }, children: wordmarkChildren() }),
       backendNote(error || 'no data yet'),
       jsx('div', { style: { fontSize: '0.75rem', color: 'var(--ui-text-tertiary)', marginTop: '4px' }, children: 'Run a fight from the Model Kombat page.' })
     ] })
@@ -351,8 +391,8 @@ function KombatPane() {
     },
     children: [
       jsx('div', {
-        style: { textAlign: 'center', fontWeight: 800, letterSpacing: '0.18em', color: 'var(--ui-text)', marginBottom: '8px' },
-        children: 'MODEL KOMBAT'
+        style: { textAlign: 'center', fontWeight: 400, color: 'var(--ui-text)', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+        children: wordmarkChildren()
       }),
       arenaView(live),
       error ? backendNote(error) : null
@@ -415,8 +455,8 @@ function KombatPage({ ctx }) {
     },
     children: [
       jsx('h1', {
-        style: { margin: '0 0 4px', textAlign: 'center', letterSpacing: '0.18em', fontSize: '1.6rem' },
-        children: 'MODEL KOMBAT'
+        style: { margin: '0 0 4px', textAlign: 'center', fontSize: '1.6rem', fontWeight: 400, color: 'var(--ui-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+        children: wordmarkChildren()
       }),
       jsx('p', {
         style: { textAlign: 'center', color: 'var(--ui-text-tertiary)', fontSize: '0.75rem', letterSpacing: '0.3em', textTransform: 'uppercase', marginTop: 0 },
@@ -583,15 +623,15 @@ export default {
     ctx.setInterval(loadRecs, RECS_POLL_MS)
 
     // Live push: the engine broadcasts fight updates over the global stream.
-    // host.onEvent returns a disposer — wire it to ctx.onDispose so a
-    // hot-reload/disable does not stack live listeners (ESM cannot unload).
-    const liveEventDisposer = host.onEvent(LIVE_EVENT, (event) => {
+    // ctx.onEvent is SDK-tracked (PluginContext.onEvent: removed on
+    // unload/reload/disable), so no manual disposer is needed — the previous
+    // host.onEvent + ctx.onDispose wiring is removed.
+    ctx.onEvent(LIVE_EVENT, (event) => {
       const payload = event && event.payload
       if (payload && typeof payload === 'object') {
         setLive({ live: payload, loading: false, error: null })
       }
     })
-    if (typeof liveEventDisposer === 'function') ctx.onDispose(liveEventDisposer)
 
     ctx.register({
       id: 'arena',

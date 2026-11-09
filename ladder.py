@@ -136,7 +136,7 @@ def _model_slot(ladder: dict, lane: str, model_id: str) -> dict:
         model = {}
         models[model_id] = model
     model.setdefault("elo", START_ELO)
-    for key in ("wins", "losses", "draws", "fights", "points", "cost_usd", "latency_s"):
+    for key in ("wins", "losses", "draws", "fights", "points", "cost_usd", "latency_s", "scored_tasks"):
         model.setdefault(key, 0)
     return model
 
@@ -233,12 +233,17 @@ def update_ladder(data_dir: Path, record: dict) -> dict:
                     model["draws"] = int(_num(model.get("draws"))) + 1
                 model["fights"] = int(_num(model.get("fights"))) + 1
                 model["points"] = round(_num(model.get("points")) + points_sum, 6)
+                model["scored_tasks"] = int(_num(model.get("scored_tasks"))) + counts[side]
                 side_usage = usage.get(model_id)
                 if not isinstance(side_usage, dict):
                     side_usage = {}
-                model["cost_usd"] = round(
-                    _num(model.get("cost_usd")) + _num(side_usage.get("cost_usd")), 9
-                )
+                side_cost = side_usage.get("cost_usd")
+                if side_cost is None or model.get("cost_usd") is None:
+                    # Unknown price: keep the total unknown (never a silent 0),
+                    # so cost-per-point renders as 'n/a'.
+                    model["cost_usd"] = None
+                else:
+                    model["cost_usd"] = round(_num(model.get("cost_usd")) + _num(side_cost), 9)
                 model["latency_s"] = round(
                     _num(model.get("latency_s")) + _num(side_usage.get("latency_s")), 6
                 )
@@ -363,13 +368,29 @@ def _title_token(token: str) -> str:
 def _model_view(model_id: str, model: dict | None) -> dict:
     model = model if isinstance(model, dict) else {}
     points = _num(model.get("points"))
-    cost = _num(model.get("cost_usd"))
+    cost_raw = model.get("cost_usd")
+    cost = _num(cost_raw) if isinstance(cost_raw, (int, float)) and not isinstance(cost_raw, bool) else None
     elo = _num(model.get("elo"), START_ELO)
+    latency = _num(model.get("latency_s"))
+    scored_tasks = int(_num(model.get("scored_tasks")))
+    fights = int(_num(model.get("fights")))
+    if scored_tasks > 0:
+        latency_per_task = round(latency / scored_tasks, 6)
+    elif fights > 0:
+        latency_per_task = round(latency / fights, 6)
+    else:
+        latency_per_task = None
+    cpp = round(cost / points, 6) if (cost is not None and points > 0) else None
     return {
         "model": model_id,
         "elo": round(elo, 2),
-        "fights": int(_num(model.get("fights"))),
-        "cost_per_point": round(cost / points, 6) if points > 0 else None,
+        "fights": fights,
+        "scored_tasks": scored_tasks,
+        "latency_s": round(latency, 6),
+        "latency_per_task": latency_per_task,
+        "cost_usd": cost,
+        "cost_per_point": cpp,
+        "cost_per_point_display": f"{cpp:.4f}" if cpp is not None else "n/a",
     }
 
 
@@ -403,6 +424,8 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
         ranking.sort(
             key=lambda row: (
                 -row["elo"],
+                row["latency_per_task"] is None,
+                row["latency_per_task"] if row["latency_per_task"] is not None else 0.0,
                 row["cost_per_point"] is None,
                 row["cost_per_point"] if row["cost_per_point"] is not None else 0.0,
                 -row["fights"],
@@ -438,10 +461,12 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
             "ok": True,
             "pick": pick["model"],
             "lane": lane,
+            "elo": pick["elo"],
             "margin": round(margin, 2),
             "confidence": confidence,
             "fights": fights,
             "cost_per_point": cpp,
+            "cost_per_point_display": f"{cpp:.4f}" if cpp is not None else "n/a",
             "runner_up": runner_up["model"] if runner_up else None,
             "why": why,
             "ranking": ranking,

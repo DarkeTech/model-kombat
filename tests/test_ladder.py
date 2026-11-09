@@ -356,6 +356,26 @@ def test_write_recommendations_merges_and_stamps():
         assert (data_dir / "recommendations.json.bak").read_text() == "[[["
 
 
+def test_exact_elo_tie_breaks_on_latency_then_cost():
+    with tempfile.TemporaryDirectory() as td:
+        data_dir = Path(td)
+        fast = _model(elo=1500, fights=4, points=10, cost=1.0, latency=8.0)
+        fast["scored_tasks"] = 4  # 2.0s per scored task
+        slow = _model(elo=1500, fights=4, points=10, cost=1.0, latency=20.0)
+        slow["scored_tasks"] = 4  # 5.0s per scored task
+        _write_ladder(data_dir, {"coding": {"models": {"fast/x": fast, "slow/y": slow}}})
+        out = ladder.recommend(data_dir, "coding")
+        assert out["pick"] == "fast/x", out
+        assert out["ranking"][0]["latency_per_task"] == 2.0
+        assert out["ranking"][1]["latency_per_task"] == 5.0
+
+        # Equal latency -> lower cost per point still decides.
+        fast["latency_s"] = slow["latency_s"] = 8.0
+        fast["cost_usd"], slow["cost_usd"] = 0.5, 2.0
+        _write_ladder(data_dir, {"coding": {"models": {"fast/x": fast, "slow/y": slow}}})
+        assert ladder.recommend(data_dir, "coding")["pick"] == "fast/x"
+
+
 def main():
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_") and callable(value)]
     failures = 0

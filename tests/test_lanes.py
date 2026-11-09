@@ -3,12 +3,21 @@
 Run: python3 tests/test_lanes.py
 """
 
+import atexit
 import json
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+# Isolate plugin-data writes to a throwaway HERMES_HOME for the whole run.
+_TEST_HOME = tempfile.mkdtemp(prefix="kombat-test-home-")
+os.environ["HERMES_HOME"] = _TEST_HOME
+atexit.register(shutil.rmtree, _TEST_HOME, True)
 
 import lanes  # noqa: E402
 
@@ -252,6 +261,27 @@ def test_scout_card_degrades_without_kanban():
     assert out["card"]["rounds"]  # fallback lanes still produce a card
 
 
+def test_scout_persist_false_does_not_write_cards():
+    import tools
+
+    with tempfile.TemporaryDirectory() as td:
+        tools.set_data_dir_override(Path(td))
+        try:
+            out = json.loads(tools.kombat_scout(
+                {"input": "Write a Python function to sort a list.", "persist": False}
+            ))
+            assert out["ok"], out
+            assert not (Path(td) / "cards.json").exists(), "persist:false still wrote cards.json"
+            # Default remains persist=True for real use.
+            out2 = json.loads(tools.kombat_scout(
+                {"input": "Write a Python function to sort a list."}
+            ))
+            assert out2["ok"], out2
+            assert (Path(td) / "cards.json").exists(), "default scout did not persist"
+        finally:
+            tools.set_data_dir_override(None)
+
+
 def test_tools_score_check_alias():
     import tools
 
@@ -341,6 +371,7 @@ if __name__ == "__main__":
     test_card_unknown_lane_falls_back()
     test_scout_text_path_is_ok_and_deterministic()
     test_scout_card_degrades_without_kanban()
+    test_scout_persist_false_does_not_write_cards()
     test_tools_score_check_alias()
     test_scout_uses_active_kanban_board_with_fake_host()
     print("all lanes tests passed")

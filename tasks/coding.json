@@ -371,6 +371,859 @@
         "timeout_s": 10
       },
       "reference": "def binary_search(arr: list[int], target: int) -> int:\n    lo, hi = 0, len(arr) - 1\n    result = -1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            result = mid\n            hi = mid - 1  # continue left\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return result"
+    },
+    {
+      "id": "coding-009",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "Merge intervals with touching endpoints",
+      "prompt": "Write a Python function `merge_intervals(intervals)` that merges a list of closed integer intervals. Rules:\n1. Each interval is a two-element list `[start, end]` with `start <= end`; the input list may be in any order.\n2. Intervals that overlap OR merely touch (`next.start <= current.end`) must be merged into one interval.\n3. Return a list of two-element lists `[start, end]`, sorted by start ascending, with no two intervals overlapping or touching.\n4. Empty input returns `[]`.\n5. Do not mutate the input list or its inner lists.\n6. Zero-length intervals (start == end) are valid and merge with any interval that contains or touches that point.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "merge_intervals",
+        "cases": [
+          {
+            "args": [
+              []
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  3
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                3
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  3
+                ],
+                [
+                  5,
+                  7
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                3
+              ],
+              [
+                5,
+                7
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  3
+                ],
+                [
+                  3,
+                  6
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                6
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  3
+                ],
+                [
+                  4,
+                  6
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                3
+              ],
+              [
+                4,
+                6
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  5,
+                  7
+                ],
+                [
+                  1,
+                  3
+                ],
+                [
+                  2,
+                  4
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                4
+              ],
+              [
+                5,
+                7
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  10
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  4,
+                  5
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                10
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  -5,
+                  -3
+                ],
+                [
+                  -3,
+                  0
+                ],
+                [
+                  -1,
+                  1
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                -5,
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  2,
+                  2
+                ],
+                [
+                  3,
+                  3
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                2,
+                2
+              ],
+              [
+                3,
+                3
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  2,
+                  2
+                ],
+                [
+                  2,
+                  2
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  8,
+                  9
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  10,
+                  12
+                ],
+                [
+                  9,
+                  10
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                1,
+                3
+              ],
+              [
+                8,
+                12
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  0,
+                  0
+                ],
+                [
+                  -2,
+                  -1
+                ],
+                [
+                  1,
+                  2
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                -2,
+                -1
+              ],
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                2
+              ]
+            ]
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def merge_intervals(intervals):\n    if not intervals:\n        return []\n    items = sorted(([int(a), int(b)] for a, b in intervals), key=lambda p: (p[0], p[1]))\n    merged = [items[0][:]]\n    for start, end in items[1:]:\n        if start <= merged[-1][1]:\n            if end > merged[-1][1]:\n                merged[-1][1] = end\n        else:\n            merged.append([start, end])\n    return merged\n",
+      "common_wrong": "def merge_intervals(intervals):\n    if not intervals:\n        return []\n    items = sorted(([int(a), int(b)] for a, b in intervals), key=lambda p: (p[0], p[1]))\n    merged = [items[0][:]]\n    for start, end in items[1:]:\n        if start < merged[-1][1]:\n            if end > merged[-1][1]:\n                merged[-1][1] = end\n        else:\n            merged.append([start, end])\n    return merged\n"
+    },
+    {
+      "id": "coding-010",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "Roman numerals with canonical validation",
+      "prompt": "Write a Python function `roman_to_int(s)` that converts a canonical Roman numeral to an integer in 1..3999. Rules:\n1. `s` is a non-empty `str` containing only the uppercase symbols `I V X L C D M`; empty strings, non-strings, lowercase, or any other character must raise `ValueError`.\n2. Only these subtractive pairs are legal and each counts as one unit: `IV`=4, `IX`=9, `XL`=40, `XC`=90, `CD`=400, `CM`=900. Any other subtractive form is invalid.\n3. `I`, `X`, `C` and `M` may repeat at most three times consecutively; `V`, `L` and `D` may never repeat.\n4. The numeral must be canonical: re-encoding the resulting value must reproduce `s` exactly (so `IIII`, `VV`, `IC`, `IM` and `MMMM` are invalid).\n5. Any invalid input must raise `ValueError`; the function must never return a number for a non-canonical numeral.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "roman_to_int",
+        "cases": [
+          {
+            "args": [
+              "I"
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              "III"
+            ],
+            "expect": 3
+          },
+          {
+            "args": [
+              "IV"
+            ],
+            "expect": 4
+          },
+          {
+            "args": [
+              "IX"
+            ],
+            "expect": 9
+          },
+          {
+            "args": [
+              "XL"
+            ],
+            "expect": 40
+          },
+          {
+            "args": [
+              "XLIX"
+            ],
+            "expect": 49
+          },
+          {
+            "args": [
+              "MCMXCIV"
+            ],
+            "expect": 1994
+          },
+          {
+            "args": [
+              "MMXXIV"
+            ],
+            "expect": 2024
+          },
+          {
+            "args": [
+              "MMMCMXCIX"
+            ],
+            "expect": 3999
+          },
+          {
+            "args": [
+              "IIII"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "VV"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "IC"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "IM"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "MMMM"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "iv"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              ""
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "ABC"
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "VALUES = {\"I\": 1, \"V\": 5, \"X\": 10, \"L\": 50, \"C\": 100, \"D\": 500, \"M\": 1000}\nPAIRS = {\"IV\": 4, \"IX\": 9, \"XL\": 40, \"XC\": 90, \"CD\": 400, \"CM\": 900}\nNUMERALS = [\n    (1000, \"M\"), (900, \"CM\"), (500, \"D\"), (400, \"CD\"), (100, \"C\"), (90, \"XC\"),\n    (50, \"L\"), (40, \"XL\"), (10, \"X\"), (9, \"IX\"), (5, \"V\"), (4, \"IV\"), (1, \"I\"),\n]\n\n\ndef _to_roman(n):\n    out = []\n    for value, symbol in NUMERALS:\n        while n >= value:\n            out.append(symbol)\n            n -= value\n    return \"\".join(out)\n\n\ndef roman_to_int(s):\n    if not isinstance(s, str) or s == \"\":\n        raise ValueError(\"empty or non-string numeral\")\n    for ch in s:\n        if ch not in VALUES:\n            raise ValueError(\"invalid numeral character\")\n    total = 0\n    i = 0\n    while i < len(s):\n        if i + 1 < len(s) and s[i:i + 2] in PAIRS:\n            total += PAIRS[s[i:i + 2]]\n            i += 2\n        else:\n            total += VALUES[s[i]]\n            i += 1\n    if total < 1 or total > 3999:\n        raise ValueError(\"out of range\")\n    if _to_roman(total) != s:\n        raise ValueError(\"not canonical\")\n    return total\n",
+      "common_wrong": "VALUES = {\"I\": 1, \"V\": 5, \"X\": 10, \"L\": 50, \"C\": 100, \"D\": 500, \"M\": 1000}\n\n\ndef roman_to_int(s):\n    if not s:\n        raise ValueError(\"empty\")\n    total = 0\n    previous = 0\n    for ch in reversed(s):\n        value = VALUES[ch]\n        if value < previous:\n            total -= value\n        else:\n            total += value\n        previous = value\n    return total\n"
+    },
+    {
+      "id": "coding-011",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "Semver-style compare with pre-release tags",
+      "prompt": "Write a Python function `compare_versions(a, b)` returning -1, 0 or 1. Rules:\n1. A version is `core` or `core-pre`. `core` is one or more dot-separated identifiers that each consist only of ASCII digits (leading zeros allowed, compared numerically). `pre` is one or more dot-separated identifiers that each consist only of ASCII letters, digits or `-`.\n2. Compare the numeric cores left to right; a missing core identifier counts as 0, so `1.0` and `1.0.0` are equal.\n3. A version WITHOUT a pre-release outranks the same core WITH one.\n4. Compare pre-release identifiers left to right. Two numeric identifiers compare by integer value; two non-numeric identifiers compare by ASCII order (case-sensitive); a numeric identifier ranks lower than a non-numeric one.\n5. If all shared identifiers are equal, fewer pre-release identifiers rank lower (`1.0.0-alpha` < `1.0.0-alpha.1`).\n6. Raise `ValueError` for: a non-string or empty input, an empty core identifier (`1..2`), a non-digit core identifier, an empty pre-release (`1-`), an empty pre-release identifier (`1-a..b`), or a pre-release character outside letters/digits/`-` (for example `+`).",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "compare_versions",
+        "cases": [
+          {
+            "args": [
+              "1.0.0",
+              "1.0.0"
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              "1.0",
+              "1.0.0"
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              "1.0.1",
+              "1.0"
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              "2.0",
+              "10.0"
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              "1.0.0-alpha",
+              "1.0.0"
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              "1.0.0",
+              "1.0.0-rc.1"
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              "1.0.0-alpha",
+              "1.0.0-alpha.1"
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              "1.0.0-alpha.1",
+              "1.0.0-alpha.beta"
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              "1.0.0-beta.2",
+              "1.0.0-beta.11"
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              "1.0.0-rc.1",
+              "1.0.0-beta.11"
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              "1.0.0-alpha-1",
+              "1.0.0-alpha.1"
+            ],
+            "expect": 1
+          },
+          {
+            "args": [
+              "01.2",
+              "1.2.0"
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              "1.0.0-1",
+              "1.0.0-1.0"
+            ],
+            "expect": -1
+          },
+          {
+            "args": [
+              "1.0.0+build",
+              "1.0.0"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1..2",
+              "1.0"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1.0.0-",
+              "1.0.0"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1.0.0-a..b",
+              "1.0.0"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "",
+              "1.0"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1.x",
+              "1.0"
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def _parse(version):\n    if not isinstance(version, str) or version == \"\":\n        raise ValueError(\"version must be a non-empty string\")\n    core, sep, pre = version.partition(\"-\")\n    if core == \"\":\n        raise ValueError(\"empty core\")\n    core_parts = core.split(\".\")\n    numbers = []\n    for part in core_parts:\n        if part == \"\" or any(ch not in \"0123456789\" for ch in part):\n            raise ValueError(\"core identifiers must be digits\")\n        numbers.append(int(part))\n    if not sep:\n        return numbers, []\n    if pre == \"\":\n        raise ValueError(\"empty pre-release\")\n    identifiers = pre.split(\".\")\n    for ident in identifiers:\n        if ident == \"\":\n            raise ValueError(\"empty pre-release identifier\")\n        for ch in ident:\n            if not (ch in \"0123456789\" or \"a\" <= ch <= \"z\" or \"A\" <= ch <= \"Z\" or ch == \"-\"):\n                raise ValueError(\"bad pre-release character\")\n    return numbers, identifiers\n\n\ndef compare_versions(a, b):\n    core_a, pre_a = _parse(a)\n    core_b, pre_b = _parse(b)\n    for i in range(max(len(core_a), len(core_b))):\n        x = core_a[i] if i < len(core_a) else 0\n        y = core_b[i] if i < len(core_b) else 0\n        if x != y:\n            return -1 if x < y else 1\n    if not pre_a and not pre_b:\n        return 0\n    if not pre_a:\n        return 1\n    if not pre_b:\n        return -1\n    for x, y in zip(pre_a, pre_b):\n        if x == y:\n            continue\n        x_num = x.isdigit() and x.isascii()\n        y_num = y.isdigit() and y.isascii()\n        if x_num and y_num:\n            if int(x) != int(y):\n                return -1 if int(x) < int(y) else 1\n            continue\n        if x_num != y_num:\n            return -1 if x_num else 1\n        return -1 if x < y else 1\n    if len(pre_a) == len(pre_b):\n        return 0\n    return -1 if len(pre_a) < len(pre_b) else 1\n",
+      "common_wrong": "def _parse(version):\n    core, sep, pre = version.partition(\"-\")\n    numbers = [int(p) for p in core.split(\".\")]\n    return numbers, (pre.split(\".\") if sep else [])\n\n\ndef compare_versions(a, b):\n    core_a, pre_a = _parse(a)\n    core_b, pre_b = _parse(b)\n    if len(core_a) != len(core_b):\n        return -1 if len(core_a) < len(core_b) else 1\n    for x, y in zip(core_a, core_b):\n        if x != y:\n            return -1 if x < y else 1\n    if not pre_a and not pre_b:\n        return 0\n    if not pre_a:\n        return 1\n    if not pre_b:\n        return -1\n    for x, y in zip(pre_a, pre_b):\n        if x != y:\n            return -1 if (x.isdigit(), int(x) if x.isdigit() else 0, x) < (\n                y.isdigit(), int(y) if y.isdigit() else 0, y) else 1\n    if len(pre_a) == len(pre_b):\n        return 0\n    return -1 if len(pre_a) < len(pre_b) else 1\n"
+    },
+    {
+      "id": "coding-012",
+      "lane": "coding",
+      "difficulty": 3,
+      "title": "Cron field expansion with validation",
+      "prompt": "Write a Python function `expand_cron_field(field, lo, hi)` that expands one cron field into a sorted list of unique integers in `lo..hi` inclusive. Rules:\n1. `field` is a comma-separated list of items; whitespace around the field and around each item is ignored. An empty field or empty item raises `ValueError`.\n2. Legal item forms are exactly: `*`, `*/S`, `N`, `A-B`, and `A-B/S`, where `N`, `A`, `B`, `S` are base-10 integer strings. `N/S` is illegal and must raise `ValueError`.\n3. `*` means every value from `lo` to `hi`; `*/S` means `lo, lo+S, ...` up to `hi`; `A-B` means `A..B` inclusive; `A-B/S` means `A, A+S, ...` up to and including `B`.\n4. Every number must satisfy `lo <= value <= hi`, `S >= 1`, and `A <= B`; otherwise raise `ValueError`. Values that are not integers (`a`, `1.5`, `-1`) raise `ValueError`.\n5. The result is ascending with duplicates removed and must not depend on item order in the field; an item may overlap another.",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "expand_cron_field",
+        "cases": [
+          {
+            "args": [
+              "*",
+              0,
+              59
+            ],
+            "expect": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49,
+              50,
+              51,
+              52,
+              53,
+              54,
+              55,
+              56,
+              57,
+              58,
+              59
+            ]
+          },
+          {
+            "args": [
+              "*/15",
+              0,
+              59
+            ],
+            "expect": [
+              0,
+              15,
+              30,
+              45
+            ]
+          },
+          {
+            "args": [
+              "*/15",
+              5,
+              20
+            ],
+            "expect": [
+              5,
+              20
+            ]
+          },
+          {
+            "args": [
+              "1-5",
+              0,
+              59
+            ],
+            "expect": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          {
+            "args": [
+              "1-10/3",
+              0,
+              59
+            ],
+            "expect": [
+              1,
+              4,
+              7,
+              10
+            ]
+          },
+          {
+            "args": [
+              "5",
+              0,
+              59
+            ],
+            "expect": [
+              5
+            ]
+          },
+          {
+            "args": [
+              "1,3,5-7",
+              0,
+              59
+            ],
+            "expect": [
+              1,
+              3,
+              5,
+              6,
+              7
+            ]
+          },
+          {
+            "args": [
+              "0-0",
+              0,
+              59
+            ],
+            "expect": [
+              0
+            ]
+          },
+          {
+            "args": [
+              "59-59",
+              0,
+              59
+            ],
+            "expect": [
+              59
+            ]
+          },
+          {
+            "args": [
+              " 2 , 4 ",
+              0,
+              10
+            ],
+            "expect": [
+              2,
+              4
+            ]
+          },
+          {
+            "args": [
+              "3,3,3",
+              0,
+              10
+            ],
+            "expect": [
+              3
+            ]
+          },
+          {
+            "args": [
+              "7-9,1-2",
+              0,
+              10
+            ],
+            "expect": [
+              1,
+              2,
+              7,
+              8,
+              9
+            ]
+          },
+          {
+            "args": [
+              "*/2",
+              1,
+              7
+            ],
+            "expect": [
+              1,
+              3,
+              5,
+              7
+            ]
+          },
+          {
+            "args": [
+              "60",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "5-1",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "*/0",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1-5/0",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1/2",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "a",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1,,2",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "-1",
+              0,
+              59
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def _int(text):\n    if text == \"\" or any(ch not in \"0123456789\" for ch in text):\n        raise ValueError(\"expected an integer\")\n    return int(text)\n\n\ndef expand_cron_field(field, lo, hi):\n    if not isinstance(field, str):\n        raise ValueError(\"field must be a string\")\n    items = field.split(\",\")\n    values = set()\n    for raw in items:\n        item = raw.strip()\n        if item == \"\":\n            raise ValueError(\"empty item\")\n        step = 1\n        if \"/\" in item:\n            head, sep, step_text = item.partition(\"/\")\n            if \"/\" in step_text:\n                raise ValueError(\"bad step\")\n            step = _int(step_text)\n            if step < 1:\n                raise ValueError(\"step must be >= 1\")\n        else:\n            head = item\n        if head == \"*\":\n            start, end = lo, hi\n        elif \"-\" in head:\n            left, sep, right = head.partition(\"-\")\n            start, end = _int(left), _int(right)\n            if start > end:\n                raise ValueError(\"reversed range\")\n        else:\n            start = end = _int(head)\n            if \"/\" in item:\n                raise ValueError(\"a single value cannot take a step\")\n        for value in (start, end):\n            if value < lo or value > hi:\n                raise ValueError(\"value out of range\")\n        values.update(range(start, end + 1, step))\n    return sorted(values)\n",
+      "common_wrong": "def _int(text):\n    return int(text)\n\n\ndef expand_cron_field(field, lo, hi):\n    items = field.split(\",\")\n    values = set()\n    for raw in items:\n        item = raw.strip()\n        if item == \"\":\n            raise ValueError(\"empty item\")\n        if \"/\" in item:\n            head, step_text = item.split(\"/\")\n            step = _int(step_text)\n            if step < 1:\n                raise ValueError(\"bad step\")\n        else:\n            head, step = item, 1\n        if head == \"*\":\n            start, end = lo, hi\n        elif \"-\" in head:\n            left, right = head.split(\"-\")\n            start, end = _int(left), _int(right)\n            if start > end:\n                raise ValueError(\"reversed range\")\n        else:\n            start = end = _int(head)\n        for value in (start, end):\n            if value < lo or value > hi:\n                raise ValueError(\"out of range\")\n        values.update(range(start, end, step))\n    return sorted(values)\n"
     }
   ]
 }

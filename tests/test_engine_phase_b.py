@@ -3,13 +3,21 @@
 Run: python3 tests/test_engine_phase_b.py   (or pytest tests/test_engine_phase_b.py)
 """
 
+import atexit
 import json
+import os
+import shutil
 import sys
 import tempfile
 import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Isolate plugin-data writes to a throwaway HERMES_HOME for the whole run.
+_TEST_HOME = tempfile.mkdtemp(prefix="kombat-test-home-")
+os.environ["HERMES_HOME"] = _TEST_HOME
+atexit.register(shutil.rmtree, _TEST_HOME, True)
 
 import tools  # noqa: E402
 

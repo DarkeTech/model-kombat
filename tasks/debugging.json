@@ -376,6 +376,619 @@
         "timeout_s": 10
       },
       "reference": "def binary_search(arr, target):\n    lo, hi = 0, len(arr) - 1\n    result = -1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            result = mid\n            hi = mid - 1  # continue left\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return result"
+    },
+    {
+      "id": "debugging-007",
+      "lane": "debugging",
+      "difficulty": 3,
+      "title": "Fix duration parsing (order, duplicates, factor)",
+      "prompt": "The function below has several independent bugs. Fix it and return the complete corrected function (entrypoint `parse_duration`).\n\nSpecification:\n1. `parse_duration(s)` converts a compact duration string into whole seconds.\n2. The string is one or more `<digits><unit>` groups with no separators or spaces; units are `d` (86400), `h` (3600), `m` (60) and `s` (1), and each may appear at most once per string.\n3. Units must appear in strictly descending order d, h, m, s; anything else (for example `30m1h` or `1h1h`) raises `ValueError`.\n4. Digits are ASCII base-10 only. A missing number (`h5`), a missing unit (`1h30`), an unknown unit (`5x`), an empty string, or a non-string raises `ValueError`.\n5. A zero value is legal (`0s` is 0). Return an `int`.\n\nBuggy code:\n\n```python\ndef parse_duration(s):\n    \"\"\"Convert a compact duration string such as '1h30m' into seconds.\"\"\"\n    units = {\"d\": 86400, \"h\": 3600, \"m\": 100, \"s\": 1}\n    rank = {\"d\": 0, \"h\": 1, \"m\": 2, \"s\": 3}\n    total = 0\n    i = 0\n    last_rank = -1\n    seen = []\n    while i < len(s):\n        start = i\n        while i < len(s) and s[i].isdigit():\n            i += 1\n        if start == i:\n            raise ValueError(\"missing number\")\n        value = int(s[start:i])\n        if i >= len(s):\n            raise ValueError(\"missing unit\")\n        unit = s[i]\n        if unit not in units:\n            raise ValueError(\"bad unit\")\n        seen.append(unit)\n        last_rank = rank[unit]\n        total += value * units[unit]\n        i += 1\n    return total\n```",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "parse_duration",
+        "cases": [
+          {
+            "args": [
+              "45s"
+            ],
+            "expect": 45
+          },
+          {
+            "args": [
+              "1h30m"
+            ],
+            "expect": 5400
+          },
+          {
+            "args": [
+              "2d3h"
+            ],
+            "expect": 183600
+          },
+          {
+            "args": [
+              "1d2h3m4s"
+            ],
+            "expect": 93784
+          },
+          {
+            "args": [
+              "10m5s"
+            ],
+            "expect": 605
+          },
+          {
+            "args": [
+              "0s"
+            ],
+            "expect": 0
+          },
+          {
+            "args": [
+              "1d"
+            ],
+            "expect": 86400
+          },
+          {
+            "args": [
+              ""
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1h1h"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "30m1h"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1h30"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "5x"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "h5"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1H"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "1h 30m"
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def parse_duration(s):\n    if not isinstance(s, str) or s == \"\":\n        raise ValueError(\"empty duration\")\n    units = {\"d\": 86400, \"h\": 3600, \"m\": 60, \"s\": 1}\n    rank = {\"d\": 0, \"h\": 1, \"m\": 2, \"s\": 3}\n    total = 0\n    i = 0\n    last_rank = -1\n    seen = set()\n    while i < len(s):\n        start = i\n        while i < len(s) and \"0\" <= s[i] <= \"9\":\n            i += 1\n        if start == i:\n            raise ValueError(\"missing number\")\n        value = int(s[start:i])\n        if i >= len(s):\n            raise ValueError(\"missing unit\")\n        unit = s[i]\n        if unit not in units:\n            raise ValueError(\"bad unit\")\n        if unit in seen or rank[unit] <= last_rank:\n            raise ValueError(\"duplicate or out of order\")\n        seen.add(unit)\n        last_rank = rank[unit]\n        total += value * units[unit]\n        i += 1\n    return total\n",
+      "common_wrong": "def parse_duration(s):\n    if not isinstance(s, str) or s == \"\":\n        raise ValueError(\"empty duration\")\n    units = {\"d\": 86400, \"h\": 3600, \"m\": 60, \"s\": 1}\n    rank = {\"d\": 0, \"h\": 1, \"m\": 2, \"s\": 3}\n    total = 0\n    i = 0\n    last_rank = -1\n    seen = []\n    while i < len(s):\n        start = i\n        while i < len(s) and \"0\" <= s[i] <= \"9\":\n            i += 1\n        if start == i:\n            raise ValueError(\"missing number\")\n        value = int(s[start:i])\n        if i >= len(s):\n            raise ValueError(\"missing unit\")\n        unit = s[i]\n        if unit not in units:\n            raise ValueError(\"bad unit\")\n        seen.append(unit)\n        last_rank = rank[unit]\n        total += value * units[unit]\n        i += 1\n    return total\n"
+    },
+    {
+      "id": "debugging-008",
+      "lane": "debugging",
+      "difficulty": 3,
+      "title": "Fix query-string parsing (decoding and duplicates)",
+      "prompt": "The function below parses a URL query string but has several independent bugs. Fix it and return the complete corrected code (entrypoint `parse_query_string`).\n\nSpecification:\n1. Pairs are separated by `&`; each pair is split at the FIRST `=`, so a value may contain `=` (`a=b=c` gives `{'a': 'b=c'}`). A pair without `=`, an empty key, an empty pair (for example `a=1&&b=2`) or an empty query string element raises `ValueError`; the empty query string `\"\"` returns `{}`.\n2. Keys and values are form-decoded: `+` becomes a space and every `%XX` (two hex digits, either case) becomes that byte. The decoded bytes are then interpreted as UTF-8; invalid UTF-8 raises `ValueError`.\n3. A `%` that is not followed by exactly two hex digits raises `ValueError` (including a trailing `%` or `%G1`).\n4. Keys are decoded BEFORE the empty-key check: a key that decodes to the empty string is invalid. Duplicate keys keep the LAST value; key order follows first appearance.\n5. Return a `dict[str, str]`.\n\nBuggy code:\n\n```python\ndef _is_valid_key(key):\n    \"\"\"A key is valid when it is a non-empty string.\"\"\"\n    if not isinstance(key, str):\n        return False\n    if key == \"\":\n        return False\n    return True\n\n\ndef parse_query_string(qs):\n    \"\"\"Parse a URL query string into a dict of strings.\n\n    Pairs are separated by '&'; the first '=' splits key from value.\n    \"\"\"\n    if qs == \"\":\n        return {}\n    result = {}\n    for part in qs.split(\"&\"):\n        if part == \"\":\n            continue\n        if \"=\" not in part:\n            raise ValueError(\"missing '='\")\n        key, value = part.split(\"=\", 1)\n        if not _is_valid_key(key):\n            raise ValueError(\"empty key\")\n        if key not in result:\n            result[key] = value\n    return result\n```",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "parse_query_string",
+        "cases": [
+          {
+            "args": [
+              ""
+            ],
+            "expect": {}
+          },
+          {
+            "args": [
+              "a=1"
+            ],
+            "expect": {
+              "a": "1"
+            }
+          },
+          {
+            "args": [
+              "a=1&b=2"
+            ],
+            "expect": {
+              "a": "1",
+              "b": "2"
+            }
+          },
+          {
+            "args": [
+              "a=1&a=2"
+            ],
+            "expect": {
+              "a": "2"
+            }
+          },
+          {
+            "args": [
+              "a=1&b=2&a=3"
+            ],
+            "expect": {
+              "a": "3",
+              "b": "2"
+            }
+          },
+          {
+            "args": [
+              "q=hello+world"
+            ],
+            "expect": {
+              "q": "hello world"
+            }
+          },
+          {
+            "args": [
+              "x=%41%42"
+            ],
+            "expect": {
+              "x": "AB"
+            }
+          },
+          {
+            "args": [
+              "x=%e2%9c%93"
+            ],
+            "expect": {
+              "x": "✓"
+            }
+          },
+          {
+            "args": [
+              "a=b=c"
+            ],
+            "expect": {
+              "a": "b=c"
+            }
+          },
+          {
+            "args": [
+              "a="
+            ],
+            "expect": {
+              "a": ""
+            }
+          },
+          {
+            "args": [
+              "a+b=1"
+            ],
+            "expect": {
+              "a b": "1"
+            }
+          },
+          {
+            "args": [
+              "a=1&&b=2"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "a"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "=1"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "a=%ZZ"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "a=%4"
+            ],
+            "raises": "ValueError"
+          },
+          {
+            "args": [
+              "a=%FF"
+            ],
+            "raises": "ValueError"
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "HEX = \"0123456789abcdefABCDEF\"\n\n\ndef _decode(text):\n    out = bytearray()\n    i = 0\n    while i < len(text):\n        ch = text[i]\n        if ch == \"+\":\n            out.extend(b\" \")\n            i += 1\n        elif ch == \"%\":\n            if i + 2 >= len(text) or text[i + 1] not in HEX or text[i + 2] not in HEX:\n                raise ValueError(\"bad percent escape\")\n            out.append(int(text[i + 1:i + 3], 16))\n            i += 3\n        else:\n            out.extend(ch.encode(\"utf-8\"))\n            i += 1\n    try:\n        return out.decode(\"utf-8\")\n    except UnicodeDecodeError:\n        raise ValueError(\"invalid utf-8\")\n\n\ndef parse_query_string(qs):\n    if not isinstance(qs, str):\n        raise ValueError(\"query must be a string\")\n    if qs == \"\":\n        return {}\n    result = {}\n    for part in qs.split(\"&\"):\n        if part == \"\":\n            raise ValueError(\"empty pair\")\n        if \"=\" not in part:\n            raise ValueError(\"missing '='\")\n        key, value = part.split(\"=\", 1)\n        if key == \"\":\n            raise ValueError(\"empty key\")\n        key = _decode(key)\n        value = _decode(value)\n        if key == \"\":\n            raise ValueError(\"empty key\")\n        result[key] = value\n    return result\n",
+      "common_wrong": "def parse_query_string(qs):\n    if qs == \"\":\n        return {}\n    result = {}\n    for part in qs.split(\"&\"):\n        if part == \"\":\n            continue\n        if \"=\" not in part:\n            raise ValueError(\"missing '='\")\n        key, value = part.split(\"=\", 1)\n        if key == \"\":\n            raise ValueError(\"empty key\")\n        key = key.replace(\"+\", \" \")\n        value = value.replace(\"+\", \" \")\n        if key not in result:\n            result[key] = value\n    return result\n"
+    },
+    {
+      "id": "debugging-009",
+      "lane": "debugging",
+      "difficulty": 3,
+      "title": "Fix top-k word frequency (case, unicode, ties)",
+      "prompt": "The function below returns the most frequent words but has several independent bugs. Fix it and return the complete corrected code (entrypoint `top_k_words`).\n\nSpecification:\n1. A word is a maximal run of ASCII letters `a-z`/`A-Z` and digits `0-9`; every other character (including accented or non-Latin letters) separates words.\n2. Counting is case-insensitive: words are lowercased before counting.\n3. Return the top `k` words as a list of two-element lists `[word, count]`, sorted by count descending and then by word ascending (by Unicode code point of the lowercased word).\n4. If `k <= 0` return `[]`; if `k` exceeds the number of distinct words, return all of them. Empty or wordless text returns `[]`.\n\nBuggy code:\n\n```python\ndef _tokenize(text):\n    \"\"\"Yield words from text (a word is a run of alphanumeric characters).\"\"\"\n    word = \"\"\n    for ch in text:\n        if ch.isalnum():\n            word += ch\n        else:\n            if word:\n                yield word\n                word = \"\"\n    if word:\n        yield word\n\n\ndef top_k_words(text, k):\n    \"\"\"Return the k most frequent words as [word, count] pairs.\"\"\"\n    counts = {}\n    for word in _tokenize(text):\n        if word in counts:\n            counts[word] += 1\n        else:\n            counts[word] = 1\n    ordered = sorted(counts.items(), key=lambda pair: pair[1], reverse=True)\n    result = []\n    for word, count in ordered[:k]:\n        result.append([word, count])\n    return result\n```",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "top_k_words",
+        "cases": [
+          {
+            "args": [
+              "The cat the dog",
+              2
+            ],
+            "expect": [
+              [
+                "the",
+                2
+              ],
+              [
+                "cat",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              "b a c",
+              2
+            ],
+            "expect": [
+              [
+                "a",
+                1
+              ],
+              [
+                "b",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              "b a c",
+              0
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              "b a c",
+              -1
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              "café café",
+              5
+            ],
+            "expect": [
+              [
+                "caf",
+                2
+              ]
+            ]
+          },
+          {
+            "args": [
+              "naïve",
+              5
+            ],
+            "expect": [
+              [
+                "na",
+                1
+              ],
+              [
+                "ve",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              "x y z",
+              10
+            ],
+            "expect": [
+              [
+                "x",
+                1
+              ],
+              [
+                "y",
+                1
+              ],
+              [
+                "z",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              "",
+              3
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              "!!! ???",
+              3
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              "Hello, HELLO! hello?",
+              1
+            ],
+            "expect": [
+              [
+                "hello",
+                3
+              ]
+            ]
+          },
+          {
+            "args": [
+              "a1 b2 a1",
+              2
+            ],
+            "expect": [
+              [
+                "a1",
+                2
+              ],
+              [
+                "b2",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              "aa bb aa bb cc",
+              1
+            ],
+            "expect": [
+              [
+                "aa",
+                2
+              ]
+            ]
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def top_k_words(text, k):\n    if k <= 0:\n        return []\n    counts = {}\n    word = []\n    for ch in text + \" \":\n        if (\"a\" <= ch <= \"z\") or (\"A\" <= ch <= \"Z\") or (\"0\" <= ch <= \"9\"):\n            word.append(ch.lower())\n        elif word:\n            token = \"\".join(word)\n            counts[token] = counts.get(token, 0) + 1\n            word = []\n    ordered = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))\n    return [[w, c] for w, c in ordered[:k]]\n",
+      "common_wrong": "def top_k_words(text, k):\n    if k <= 0:\n        return []\n    counts = {}\n    word = []\n    for ch in text + \" \":\n        if ch.isalnum():\n            word.append(ch)\n        elif word:\n            token = \"\".join(word).lower()\n            counts[token] = counts.get(token, 0) + 1\n            word = []\n    ordered = sorted(counts.items(), key=lambda pair: pair[1], reverse=True)\n    return [[w, c] for w, c in ordered[:k]]\n"
+    },
+    {
+      "id": "debugging-010",
+      "lane": "debugging",
+      "difficulty": 3,
+      "title": "Fix session totals (clamping, empty users, ties)",
+      "prompt": "The function below aggregates session durations but has several independent bugs. Fix it and return the complete corrected code (entrypoint `summarize_sessions`).\n\nSpecification:\n1. `events` is a list of `[user, seconds]` pairs; `user` is a non-empty string and `seconds` is an int or `None`.\n2. `None` and negative durations count as 0 (they must not reduce a total or raise).\n3. Sum per user, then drop every user whose total is not strictly greater than 0.\n4. Return a list of two-element lists `[user, total]` sorted by total descending, then by user ascending (Unicode code point order).\n5. Empty input returns `[]`.\n\nBuggy code:\n\n```python\ndef _add(total, seconds):\n    \"\"\"Add one duration to a running total.\"\"\"\n    return total + seconds\n\n\ndef summarize_sessions(events):\n    \"\"\"Aggregate session seconds per user.\n\n    Each event is a [user, seconds] pair, and durations are summed\n    exactly as they are given.  The result is a list of [user, total]\n    pairs sorted by total descending.\n    \"\"\"\n    if not events:\n        return []\n    totals = {}\n    for event in events:\n        user = event[0]\n        seconds = event[1]\n        current = totals.get(user, 0)\n        totals[user] = _add(current, seconds)\n    ordered = sorted(totals.items(), key=lambda pair: pair[1], reverse=True)\n    rows = []\n    for user, total in ordered:\n        rows.append([user, total])\n    return rows\n```",
+      "check": {
+        "type": "code_exec",
+        "entrypoint": "summarize_sessions",
+        "cases": [
+          {
+            "args": [
+              []
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "ann",
+                  30
+                ],
+                [
+                  "bob",
+                  10
+                ],
+                [
+                  "ann",
+                  -5
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                "ann",
+                30
+              ],
+              [
+                "bob",
+                10
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "b",
+                  5
+                ],
+                [
+                  "a",
+                  5
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                "a",
+                5
+              ],
+              [
+                "b",
+                5
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "cy",
+                  null
+                ]
+              ]
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "z",
+                  -3
+                ]
+              ]
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "m",
+                  0
+                ]
+              ]
+            ],
+            "expect": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "m",
+                  1
+                ],
+                [
+                  "n",
+                  -1
+                ],
+                [
+                  "o",
+                  2
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                "o",
+                2
+              ],
+              [
+                "m",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "a",
+                  10
+                ],
+                [
+                  "a",
+                  -4
+                ],
+                [
+                  "b",
+                  6
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                "a",
+                10
+              ],
+              [
+                "b",
+                6
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "Zoë",
+                  3
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                "Zoë",
+                3
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "p",
+                  null
+                ],
+                [
+                  "p",
+                  4
+                ],
+                [
+                  "q",
+                  null
+                ]
+              ]
+            ],
+            "expect": [
+              [
+                "p",
+                4
+              ]
+            ]
+          }
+        ],
+        "timeout_s": 10
+      },
+      "reference": "def summarize_sessions(events):\n    totals = {}\n    for event in events:\n        user, seconds = event\n        if seconds is None or seconds < 0:\n            seconds = 0\n        totals[user] = totals.get(user, 0) + seconds\n    rows = [[user, total] for user, total in totals.items() if total > 0]\n    rows.sort(key=lambda row: (-row[1], row[0]))\n    return rows\n",
+      "common_wrong": "def summarize_sessions(events):\n    totals = {}\n    for event in events:\n        user, seconds = event\n        if seconds is None or seconds < 0:\n            seconds = 0\n        totals[user] = totals.get(user, 0) + seconds\n    ordered = sorted(totals.items(), key=lambda pair: pair[1], reverse=True)\n    return [[user, total] for user, total in ordered]\n"
     }
   ]
 }

@@ -4,11 +4,19 @@ Run: python -m pytest tests/ -q   (or: python tests/test_scoring.py)
 """
 
 import json
+import atexit
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Isolate plugin-data writes to a throwaway HERMES_HOME for the whole run.
+_TEST_HOME = tempfile.mkdtemp(prefix="kombat-test-home-")
+os.environ["HERMES_HOME"] = _TEST_HOME
+atexit.register(shutil.rmtree, _TEST_HOME, True)
 
 import tools  # noqa: E402
 
@@ -71,6 +79,16 @@ def rle_encode(s):
 ```'''
 
 TASKS = {t["id"]: t for t in tools._load_tasks()}
+
+
+def test_data_dir_honors_hermes_home():
+    with tempfile.TemporaryDirectory() as td:
+        tools.set_data_dir_override(None)
+        try:
+            os.environ["HERMES_HOME"] = td
+            assert tools._data_dir() == Path(td) / "plugin-data" / "model-kombat"
+        finally:
+            os.environ["HERMES_HOME"] = _TEST_HOME
 
 
 def test_list_tasks():
@@ -259,8 +277,11 @@ def test_run_fight_with_mock_host():
         tools.set_ctx(None)
     assert out["ok"], out
     assert out["answers_a"]["T1"].startswith("a) $44.30")
-    assert out["usage"]["fake/a"]["tokens"] == 30
-    assert out["usage"]["fake/a"]["cost_usd"] == 0.001
+    # T1 + the up-front sudden-death task are both called per fighter.
+    assert out["usage"]["fake/a"]["tokens"] == 60
+    assert out["usage"]["fake/a"]["cost_usd"] == 0.002
+    assert out["sudden_death_task"] == "T8"
+    assert out["sudden_death_usage"]["fake/a"]["tokens"] == 30
     assert out["meta_a"]["T1"]["attempts"] == 1
 
 
@@ -315,6 +336,7 @@ def test_rematch_without_errors():
 
 
 if __name__ == "__main__":
+    test_data_dir_honors_hermes_home()
     test_list_tasks()
     test_money_scorer()
     test_recall_synonyms()

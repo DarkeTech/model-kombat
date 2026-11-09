@@ -17,12 +17,23 @@ Scoring is mechanical only: exact counts, tolerances, regexes, JSON leaf
 equality, subprocess execution, and sqlite row comparison. No model judges
 another model.
 
-The code runner is hardened but is NOT a security sandbox: separate
-``python -I`` subprocess, cwd in a fresh tempdir, empty environment, resource
-limits (CPU, address space, core files, processes, file size), a wall timeout,
-capped output, and a Python audit hook that refuses writes outside the tempdir
-and process spawning. Layer that behind the existing allow_code_execution
-opt-in and treat model code as untrusted.
+The code runner is hardened defense-in-depth but is **NOT a security
+sandbox**. It uses a separate ``python -I`` subprocess with cwd in a fresh
+tempdir, an empty environment, resource limits (CPU, address space, core
+files, processes, file size), a wall timeout, capped output, a Python audit
+hook, and an import blocker. Those layers refuse writes/changes outside the
+tempdir, refuse process spawning, refuse imports of a blocklist of
+networking/FFI/process modules (ctypes, socket, subprocess, ...), and refuse
+reads of absolute paths outside the tempdir except the interpreter's own
+stdlib/site directories.
+
+None of that is a real confinement boundary: the hook is Python-level, so
+C-extension paths (e.g. cffi, a preloaded shared object), direct syscalls,
+``/proc`` quirks, environment/platform differences, and bugs in CPython's
+audit coverage can still escape or misbehave. code_exec is **OFF by default**
+(``allow_code_execution=false`` / ``allow_exec=False``); enable it only for
+models you are willing to trust with code running as your user. Treat all
+candidate code as untrusted.
 """
 
 from __future__ import annotations
@@ -399,22 +410,86 @@ ROOT = os.path.realpath(os.getcwd())
 import tempfile as _tempfile
 _tempfile.tempdir = ROOT
 
+# Never try to write .pyc files (the stdlib/site dirs are read-only to us).
+sys.dont_write_bytecode = True
+
+# Reads are allowed from the tempdir plus the interpreter's own stdlib/site
+# directories so imports (and the harness itself) still work.
+_READ_ROOTS = []
+for _p in [sys.prefix, sys.base_prefix, sys.exec_prefix] + list(sys.path):
+    if not _p or not isinstance(_p, str):
+        continue
+    try:
+        _rp = os.path.realpath(_p)
+    except Exception:
+        continue
+    if _rp and _rp not in _READ_ROOTS:
+        _READ_ROOTS.append(_rp)
+
 
 def _inside(path):
     try:
-        resolved = os.path.realpath(path)
+        resolved = os.path.realpath(os.fsdecode(path))
     except Exception:
         return False
     return resolved == ROOT or resolved.startswith(ROOT + os.sep)
 
 
-_WRITE_EVENTS = {
-    "os.remove", "os.rename", "os.rmdir", "os.mkdir", "os.chmod", "os.chown",
-    "os.link", "os.symlink", "os.truncate", "os.utime",
+def _read_allowed(path):
+    if _inside(path):
+        return True
+    try:
+        resolved = os.path.realpath(os.fsdecode(path))
+    except Exception:
+        return False
+    for root in _READ_ROOTS:
+        if resolved == root or resolved.startswith(root + os.sep):
+            return True
+    return False
+
+
+_BLOCKED_MODULES = frozenset({
+    "ctypes", "_ctypes", "cffi", "_cffi_backend", "mmap",
+    "socket", "_socket", "ssl", "_ssl", "http", "urllib",
+    "ftplib", "smtplib", "telnetlib", "multiprocessing", "_multiprocessing",
+    "subprocess", "_posixsubprocess", "pty",
+})
+
+
+class _BlockedImportFinder:
+    """sys.meta_path finder that refuses the blocklisted module roots."""
+
+    @staticmethod
+    def find_spec(fullname, path=None, target=None):
+        if fullname.split(".")[0] in _BLOCKED_MODULES:
+            raise ImportError(
+                "import of %r is blocked in the code sandbox" % (fullname,)
+            )
+        return None
+
+
+# Metadata-only writes: arg0 is the path being changed.
+_PATH_WRITE_EVENTS = {
+    "os.remove", "os.unlink", "os.rmdir", "os.mkdir", "os.chmod", "os.chown",
+    "os.truncate", "os.utime", "shutil.chown",
+}
+# Rename/link/symlink/move carry (src, dst, ...): both sides must stay inside
+# because the operation either destroys or publishes the source.
+_BOTH_SIDES_EVENTS = {
+    "os.rename", "os.replace", "os.link", "os.symlink", "shutil.move",
+}
+# Copy variants: the source is only read, so an outside source is fine as
+# long as the destination lands inside the tempdir.
+_COPY_EVENTS = {
+    "shutil.copyfile", "shutil.copymode", "shutil.copystat", "shutil.copytree",
 }
 _EXEC_EVENTS = {
     "os.system", "subprocess.Popen", "os.exec", "os.posix_spawn", "os.spawn",
     "os.fork", "os.forkpty", "pty.spawn",
+}
+_NET_EVENTS = {
+    "socket.connect", "socket.bind", "socket.sendto", "socket.getaddrinfo",
+    "socket.gethostbyname", "socket.sethostname",
 }
 
 
@@ -432,14 +507,36 @@ def _audit(event, args):
                                         os.O_APPEND | os.O_TRUNC))
             except Exception:
                 writing = False
-        if writing and not _inside(path):
-            raise PermissionError("write outside the sandbox tempdir blocked")
-    elif event in _WRITE_EVENTS:
+        if writing:
+            if not _inside(path):
+                raise PermissionError("write outside the sandbox tempdir blocked")
+        elif not _read_allowed(path):
+            raise PermissionError("read outside the sandbox tempdir blocked")
+    elif event == "import":
+        name = str(args[0]).split(".")[0] if args else ""
+        if name in _BLOCKED_MODULES:
+            raise ImportError("import of %r is blocked in the code sandbox" % (name,))
+    elif event in _PATH_WRITE_EVENTS:
         target = args[0] if args else None
-        if isinstance(target, str) and not _inside(target):
+        if target is not None and not isinstance(target, int) and not _inside(target):
             raise PermissionError("filesystem change outside the sandbox tempdir blocked")
+    elif event in _BOTH_SIDES_EVENTS:
+        for target in (args[0] if args else None, args[1] if len(args) > 1 else None):
+            if target is None or isinstance(target, int):
+                continue
+            if not _inside(target):
+                raise PermissionError(
+                    "rename/link/symlink outside the sandbox tempdir blocked"
+                )
+    elif event in _COPY_EVENTS:
+        dst = args[1] if len(args) > 1 else None
+        if dst is not None and not isinstance(dst, int) and not _inside(dst):
+            raise PermissionError("copy destination outside the sandbox tempdir blocked")
     elif event in _EXEC_EVENTS:
         raise PermissionError("process execution blocked in the sandbox")
+    elif event in _NET_EVENTS:
+        raise PermissionError("network access blocked in the sandbox")
+
 
 
 def _eq(got, want, tol=0.0):
@@ -539,10 +636,11 @@ def main():
     # coercion. Drop it so candidate code genuinely sees an empty environment.
     os.environ.clear()
     report = {"cases": [], "fatal": None, "env": dict(os.environ), "cwd": os.getcwd()}
+    sys.meta_path.insert(0, _BlockedImportFinder())
     sys.addaudithook(_audit)
     _run(report)
     try:
-        with open(RESULT, "w", encoding="utf-8") as fh:
+        with open(os.path.join(ROOT, RESULT), "w", encoding="utf-8") as fh:
             json.dump(report, fh)
     except BaseException:
         pass

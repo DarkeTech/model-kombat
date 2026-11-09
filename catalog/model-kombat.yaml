@@ -1,41 +1,53 @@
-# Catalog entry DRAFT for Model Kombat.
-# Copy to plugin-catalog/model-kombat.yaml in NousResearch/hermes-agent via PR.
-# Fill in: repo (public GitHub URL), sha (full 40-char commit at submission),
-# screenshots (raw.githubusercontent.com URLs pinned to that sha).
+# Catalog entry for Model Kombat v0.4.0 — prepared for the submission PR that adds
+# this file as plugin-catalog/model-kombat.yaml in NousResearch/hermes-agent.
+#
+# Before opening the PR:
+#   1. Replace `sha` with the full 40-character commit SHA being submitted
+#      (branches, tags and short SHAs are rejected by the loader).
+#   2. Confirm `version` matches plugin.yaml at that commit.
+#   3. Re-pin `image` and every `screenshots` entry to the same SHA.
+#
+# `category: models` — the catalog shelf taxonomy (desktop | memory | platform |
+# web | tools | voice | automation | models | general) has no evaluation shelf;
+# `models` covers plugins whose subject matter is model choice and behaviour
+# (leaderboards, drift, routing, selection). Model Kombat routes nothing and
+# changes no model config — it evaluates models — so `models` is the right
+# shelf; `tools` would be the generic fallback.
+
 name: model-kombat
-repo: https://github.com/DarkeTech/model-kombat
-sha: "0000000000000000000000000000000000000000"
+repo: https://github.com/DarkeTech/model-kombat   # placeholder until the public repo exists
+sha: "0000000000000000000000000000000000000000"  # placeholder — replace with the submitted 40-char commit SHA
 title: "Model Kombat"
-description: >-
-  Pit two Hermes models against each other in 3 escalating rounds (Warm-up 1pt,
-  Main Event 2pt, Championship 3pt) plus sudden death, scored mechanically —
-  executed code, exact counts, synonym-aware fact matching — with a live
-  kanban scoreboard and optional agentic worker fights. Choose your fighter.
-  Disclosure — pure fights call the user's configured provider through the host
-  LLM facade (ctx.llm) with per-call latency/token/cost recorded and a spend
-  budget cap (default $2.00); agentic fights dispatch real kanban workers with
-  per-task model overrides, billed per worker session and not budget-capped.
-  Optional code execution (off by default) runs model-written Python in a
-  subprocess with a timeout as the user — not a security sandbox. With the
-  kanban scoreboard on (default), the plugin creates/updates unassigned
-  display cards on a dedicated model-kombat board via the host terminal tool.
-  Reports, fight history and exports are written under the plugin data dir.
-  No telemetry; the plugin never reads credentials or other credential stores.
+description: "Head-to-head model evaluation: scout a task or kanban card into lanes, build a deterministic fight card (Warm-up 1pt, Main Event 2pt, Championship 3pt, sudden death), fight two models on identical prompts, and score mechanically — executed code, exact counts, numeric tolerances, phrase groups, JSON leaf equality, SQLite rows — with a per-lane Elo ladder, live arcade pane and kanban recommendation badges. Disclosure — network: no third-party calls, fights go through the host LLM facade and the dashboard API is local and read-only; LLM spend: two model calls per task, capped per pure fight by max_fight_cost_usd (agentic worker sessions are billed separately and not capped); subprocess/code execution: off by default, and when enabled model-written Python runs in a resource-limited subprocess as your user — defense-in-depth, not a security sandbox; kanban writes: creates unassigned display cards on a dedicated model-kombat board through the host terminal tool, never dispatched; file writes: reports, history and exports under the plugin data dir only; desktop plugin and read-only dashboard API included; no telemetry; never reads credentials."
 maintainer: DarkeTech
 tier: community
 category: models
 requires_hermes: ">=0.23.0"
 docs_url: https://github.com/DarkeTech/model-kombat#readme
-version: "0.3.0"
+version: "0.4.0"
 platforms: []
+
+# Banner is 1200x600 (2:1), served from raw.githubusercontent.com pinned to the sha:
+# image: https://raw.githubusercontent.com/DarkeTech/model-kombat/<40-char-sha>/docs/banner.png
+image: ""
+
+# Up to 6 GitHub-hosted screenshots, each pinned to the same sha:
+# screenshots:
+#   - https://raw.githubusercontent.com/DarkeTech/model-kombat/<40-char-sha>/docs/previews/arena_wide.png
+#   - https://raw.githubusercontent.com/DarkeTech/model-kombat/<40-char-sha>/docs/previews/arena_mid.png
+#   - https://raw.githubusercontent.com/DarkeTech/model-kombat/<40-char-sha>/docs/previews/arena_ko.png
+#   - https://raw.githubusercontent.com/DarkeTech/model-kombat/<40-char-sha>/docs/previews/arena_error.png
 screenshots: []
+
 capabilities:
   provides_tools:
     - kombat_list_tasks
     - kombat_run_fight
+    - kombat_scout
     - kombat_run_agentic_fight
     - kombat_score_answers
     - kombat_rematch_errors
+    - kombat_recommend
     - kombat_history
     - kombat_export
   provides_hooks: []

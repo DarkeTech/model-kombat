@@ -117,6 +117,124 @@
         ]
       },
       "reference": "Study January 2026 to June 2026 found 15% increase after new algorithm"
+    },
+    {
+      "id": "summarization-007",
+      "lane": "summarization",
+      "difficulty": 3,
+      "title": "Northgate plant in exactly 30 words",
+      "prompt": "Summarize the passage below. Your summary must satisfy ALL of these rules:\n- Exactly 30 words (words are whitespace-separated tokens).\n- It must start with \"In 2025,\".\n- It must contain each of these exactly as written: '48 million dollars', '9.5 million litres', '214,000 residents', 'Elena Brooks', '27 percent'.\n- It must NOT contain any of these banned words (as whole words): amazing, revolutionary, unprecedented.\n\nPassage:\nIn 2025, the Riverdale Water Authority completed the Northgate treatment plant with funding of 48 million dollars from the regional government and 12 million dollars from private investors. The plant, which began operating in March 2025, now treats 9.5 million litres of water per day, up from 3.1 million litres before the upgrade. Director Elena Brooks said the upgrade cut energy use by 27 percent and reduced chemical costs by 18 percent during its first year. The authority reported that 214,000 residents now receive water meeting the new 2024 safety standard, and complaints fell from 1,850 in 2023 to 620 in 2025. The project finished two months ahead of its original 2025 schedule and 6 million dollars under its 54 million dollar budget. Brooks credited engineer Marcus Reid, who led the filtration redesign, and noted that the plant will add a second treatment line in 2027 if demand grows beyond 12 million litres per day, creating at least 40 additional jobs at the site.\n\nReturn only the summary.",
+      "check": {
+        "type": "constraints",
+        "words": {
+          "min": 30,
+          "max": 30
+        },
+        "starts_with": "In 2025,",
+        "banned": [
+          "amazing",
+          "revolutionary",
+          "unprecedented"
+        ],
+        "contains": [
+          "48 million dollars",
+          "9.5 million litres",
+          "214,000 residents",
+          "Elena Brooks",
+          "27 percent"
+        ]
+      },
+      "reference": "In 2025, Riverdale completed the Northgate plant for 48 million dollars, treating 9.5 million litres daily for 214,000 residents, with Elena Brooks reporting energy use down 27 percent in total.",
+      "common_wrong": "In 2025, the amazing Northgate plant was a revolutionary success for 214,000 residents, with Elena Brooks reporting energy use down 27 percent and treating 9.5 million litres daily."
+    },
+    {
+      "id": "summarization-008",
+      "lane": "summarization",
+      "difficulty": 3,
+      "title": "Aldermere tram vote in exactly 32 words",
+      "prompt": "Summarize the passage below. Your summary must satisfy ALL of these rules:\n- Exactly 32 words (words are whitespace-separated tokens).\n- It must start with \"The Aldermere\".\n- It must contain each of these exactly as written: '96 million dollars', '14 October 2025', 'Bauer Bau GmbH', '340 jobs', '22,000 daily passengers'.\n- It must NOT contain any of these banned words (as whole words): controversial, disastrous, shocking.\n\nPassage:\nThe city council of Aldermere voted on 14 October 2025 to approve a new tram line costing 96 million dollars, funded partly by a 31 million dollar federal grant and partly by a transit levy of 4.2 percent on downtown parking. The 7.8 kilometre line will run from Halden Station to the university district, with 11 stops and a projected 22,000 daily passengers by 2028. Mayor Sofia Lindqvist said construction, led by contractor Bauer Bau GmbH, starts in January 2026 and finishes by December 2027, creating 340 construction jobs. Councillor James Oduya opposed the levy, arguing it would raise parking costs by 18 dollars per month for commuters. A 2024 transport study found that 63 percent of downtown trips are currently made by car, and the tram is expected to cut car trips by 19 percent. The council also approved 2.4 million dollars for bus priority lanes, and the line will carry 9 low-floor trams purchased from TramCo at 1.9 million dollars each. Lindqvist said the first tram arrives in June 2027 for testing, two months before passenger service begins.\n\nReturn only the summary.",
+      "check": {
+        "type": "constraints",
+        "words": {
+          "min": 32,
+          "max": 32
+        },
+        "starts_with": "The Aldermere",
+        "banned": [
+          "controversial",
+          "disastrous",
+          "shocking"
+        ],
+        "contains": [
+          "96 million dollars",
+          "14 October 2025",
+          "Bauer Bau GmbH",
+          "340 jobs",
+          "22,000 daily passengers"
+        ]
+      },
+      "reference": "The Aldermere council approved the 96 million dollars tram line on 14 October 2025, with construction by Bauer Bau GmbH creating 340 jobs for 22,000 daily passengers by 2028 in total overall.",
+      "common_wrong": "The Aldermere council controversially approved the 96 million dollar tram line on 14 October 2025, with construction by Bauer Bau GmbH creating 340 jobs for 22,000 daily passengers by 2028 in total overall."
+    },
+    {
+      "id": "summarization-009",
+      "lane": "summarization",
+      "difficulty": 3,
+      "title": "Cardivex trial results in exactly 30 words",
+      "prompt": "Summarize the passage below. Your summary must satisfy ALL of these rules:\n- Exactly 30 words (words are whitespace-separated tokens).\n- It must start with \"On 9 February 2026,\".\n- It must contain each of these exactly as written: '9 February 2026', 'Dr. Amara Haddad', '34 percent', '412 patients', '11,400 dollars', '1,200 patient'.\n- It must NOT contain any of these banned words (as whole words): miracle, breakthrough, sensational.\n\nPassage:\nResearchers at the Kelvin Institute in Glasgow published results on 9 February 2026 from a trial of 412 patients with advanced heart failure, funded by a 5.6 million dollar grant from the National Heart Foundation. The trial, led by Dr. Amara Haddad, tested the drug Cardivex against standard care over 18 months. Patients receiving Cardivex showed a 34 percent reduction in hospital readmissions and a 21 percent improvement in walking distance, compared with the control group. The study found 17 serious side effects in the Cardivex group and 19 in the control group, a difference the authors called not statistically significant. The journal reported that Cardivex costs 11,400 dollars per patient per year, and the authors estimated the health service could save 8.2 million dollars annually if 3,000 eligible patients received it. Haddad said a larger phase-three trial of 1,200 patients begins in September 2026, and the manufacturer, Norva Pharma, will fund 70 percent of its cost. The institute also announced a data-sharing agreement with hospitals in Edinburgh and Leeds covering 58,000 patient records, the largest such agreement in Scotland.\n\nReturn only the summary.",
+      "check": {
+        "type": "constraints",
+        "words": {
+          "min": 30,
+          "max": 30
+        },
+        "starts_with": "On 9 February 2026,",
+        "banned": [
+          "miracle",
+          "breakthrough",
+          "sensational"
+        ],
+        "contains": [
+          "9 February 2026",
+          "Dr. Amara Haddad",
+          "34 percent",
+          "412 patients",
+          "11,400 dollars",
+          "1,200 patient"
+        ]
+      },
+      "reference": "On 9 February 2026, Dr. Amara Haddad reported Cardivex cut readmissions 34 percent in 412 patients, costing 11,400 dollars yearly, with a 1,200 patient trial starting September 2026 in total.",
+      "common_wrong": "On 9 February 2026, Dr. Amara Haddad called Cardivex a miracle breakthrough, cutting readmissions 34 percent in 412 patients, costing 11,400 dollars yearly, with a 1,200 patient trial starting September 2026 in total."
+    },
+    {
+      "id": "summarization-010",
+      "lane": "summarization",
+      "difficulty": 3,
+      "title": "Port of Dunmore in exactly 28 words",
+      "prompt": "Summarize the passage below. Your summary must satisfy ALL of these rules:\n- Exactly 28 words (words are whitespace-separated tokens).\n- It must start with \"Dunmore\".\n- It must contain each of these exactly as written: '412,000 containers', '16 percent', 'Fiona McAllister', '1,950 workers', '28 million tonnes', '305,000 ferry passengers'.\n- It must NOT contain any of these banned words (as whole words): booming, incredible, record-breaking.\n\nPassage:\nThe Port of Dunmore reported that container traffic rose 16 percent in 2025 to 412,000 containers, its highest level since records began in 1998. The port, run by the Dunmore Harbour Board, handled 28 million tonnes of cargo worth 3.4 billion dollars, with exports to Rotterdam, Hamburg, and Antwerp accounting for 71 percent of volume. Chief executive Fiona McAllister said the new berth 7, opened in April 2025 at a cost of 22 million dollars, added capacity for 60,000 containers per year. The board, chaired by Tomas Lindqvist, also reported that 1,950 people work at the port, up from 1,620 in 2020, and that ferry passengers rose 9 percent to 305,000. McAllister said the port will spend 15 million dollars in 2026 on electric cranes, cutting diesel use by 40 percent, and a feasibility study will examine a rail link costing an estimated 180 million dollars. The port also handled 74 cruise ship calls in 2025, each bringing an average of 2,150 passengers, according to the board's annual report published in January 2026.\n\nReturn only the summary.",
+      "check": {
+        "type": "constraints",
+        "words": {
+          "min": 28,
+          "max": 28
+        },
+        "starts_with": "Dunmore",
+        "banned": [
+          "booming",
+          "incredible",
+          "record-breaking"
+        ],
+        "contains": [
+          "412,000 containers",
+          "16 percent",
+          "Fiona McAllister",
+          "1,950 workers",
+          "28 million tonnes",
+          "305,000 ferry passengers"
+        ]
+      },
+      "reference": "Dunmore handled 412,000 containers in 2025, a 16 percent rise, with Fiona McAllister reporting 1,950 workers, 28 million tonnes of cargo, and 305,000 ferry passengers in total overall.",
+      "common_wrong": "Dunmore handled a record-breaking 412,000 containers in 2025, a 16 percent rise, with Fiona McAllister reporting 1,950 workers, 28 million tonnes of cargo, and 305,000 ferry passengers in total overall."
     }
   ]
 }

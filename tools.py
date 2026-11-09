@@ -455,7 +455,7 @@ def _complete_with_retry(
                 purpose="model-kombat fight",
             )
             text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
-            return str(text or ""), _usage_of(result), attempt, None, waited
+            return str(text or ""), _usage_of(result, fighter), attempt, None, waited
         except PermissionError:
             raise
         except Exception as exc:  # noqa: BLE001 — provider errors are data, not crashes
@@ -492,6 +492,9 @@ def score_check(check: dict, answer: str, allow_exec: bool = False) -> dict:
 def _data_dir() -> Path:
     if _DATA_DIR_OVERRIDE is not None:
         return _DATA_DIR_OVERRIDE
+    home = os.environ.get("HERMES_HOME")
+    if home:
+        return Path(home) / "plugin-data" / "model-kombat"
     try:
         from plugins.plugin_storage import plugin_data_dir  # type: ignore
 
@@ -517,6 +520,84 @@ def _cfg(key: str, default=None):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ------------------------------------------------------------- pricing / cost
+
+#: Host usage never sets ``cost_usd`` (agent/plugin_llm.py only reports token
+#: counts), so the engine prices calls itself. Prices are USD per 1M tokens.
+_PRICES_FILE = Path(__file__).parent / "prices.json"
+
+
+def _price_table() -> dict:
+    """Shipped ``prices.json`` merged with the ``model_prices`` setting.
+
+    The setting wins key-by-key, so a profile can add models or override a
+    price without editing the shipped table. Entries are
+    ``{"in": USD/1M input, "out": USD/1M output}`` (an optional ``label`` is
+    informational).
+    """
+    table: dict = {}
+    raw = _read_json_file(_PRICES_FILE, {})
+    if isinstance(raw, dict):
+        for mid, entry in raw.items():
+            if isinstance(entry, dict):
+                table[str(mid)] = dict(entry)
+    override = _cfg("model_prices", None)
+    if isinstance(override, str) and override.strip().startswith("{"):
+        try:
+            override = json.loads(override)
+        except (json.JSONDecodeError, TypeError):
+            override = None
+    if isinstance(override, dict):
+        for mid, entry in override.items():
+            if isinstance(entry, dict):
+                merged = dict(table.get(str(mid), {}))
+                merged.update(entry)
+                table[str(mid)] = merged
+    return table
+
+
+def _price_for(model: str):
+    table = _price_table()
+    if str(model) in table:
+        return table[str(model)]
+    low = str(model or "").lower()
+    for mid, entry in table.items():
+        if mid.lower() == low:
+            return entry
+    return None
+
+
+def _estimate_cost(usage: dict, model: str) -> tuple[float | None, str]:
+    """Return ``(cost_usd, cost_source)`` for one call.
+
+    ``cost_source`` is ``"host"`` when the host supplied a cost, ``"estimated"``
+    when priced from ``prices.json``/``model_prices``, and ``"unknown"`` when
+    the model has no price (cost is ``None``, never silently 0).
+    """
+    if not isinstance(usage, dict):
+        return None, "unknown"
+    host_cost = usage.get("cost_usd")
+    if host_cost is not None:
+        try:
+            return float(host_cost), "host"
+        except (TypeError, ValueError):
+            pass
+    price = _price_for(model)
+    if not isinstance(price, dict):
+        return None, "unknown"
+    try:
+        in_price = float(price.get("in"))
+        out_price = float(price.get("out"))
+    except (TypeError, ValueError):
+        return None, "unknown"
+    try:
+        in_tokens = float(usage.get("input_tokens") or 0)
+        out_tokens = float(usage.get("output_tokens") or 0)
+    except (TypeError, ValueError):
+        return None, "unknown"
+    return round((in_tokens * in_price + out_tokens * out_price) / 1_000_000.0, 9), "estimated"
 
 
 # ---------------------------------------------------------------- list tasks
@@ -739,7 +820,10 @@ def kombat_scout(args: dict, **kwargs) -> str:
         card = _ln.build_card(classified, seed, extra_tasks=extra if isinstance(extra, list) else None)
     except Exception as exc:
         return _err(f"failed to build fight card: {type(exc).__name__}: {exc}")
-    _store_card(card)
+    # Persist by default so kombat_run_fight can accept the card id later.
+    # `persist: false` keeps scouting read-only (no cards.json side effect).
+    if args.get("persist", True) is not False:
+        _store_card(card)
 
     reasons = [
         "classified lanes: "
@@ -772,7 +856,7 @@ def kombat_scout(args: dict, **kwargs) -> str:
 
 # ---------------------------------------------------------------- run a fight
 
-def _usage_of(result) -> dict:
+def _usage_of(result, model: str | None = None) -> dict:
     usage = getattr(result, "usage", None)
     if usage is None and isinstance(result, dict):
         usage = result.get("usage")
@@ -784,6 +868,15 @@ def _usage_of(result) -> dict:
         val = get(key)
         if val is not None:
             out[key] = val
+    if "total_tokens" not in out:
+        try:
+            out["total_tokens"] = int(out.get("input_tokens") or 0) + int(out.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            pass
+    # Price the call when the host gave no cost (the host never does).
+    cost, source = _estimate_cost(out, model or "")
+    out["cost_usd"] = cost
+    out["cost_source"] = source
     return out
 
 
@@ -855,7 +948,7 @@ class _LiveAdapter:
             return st.apply_task_result(round_id, task_id, side, fields)
         return None
 
-    def finish(self, winner, ko, points, usage, report_path):
+    def finish(self, winner, ko, points, usage, report_path, edge=None):
         st = self.state
         if hasattr(st, "add_usage"):
             for side in ("a", "b"):
@@ -863,16 +956,21 @@ class _LiveAdapter:
                 u = (usage or {}).get(fighter) if isinstance(usage, dict) else None
                 if isinstance(u, dict):
                     try:
+                        call_cost = u.get("cost_usd")
                         st.add_usage(
                             side,
-                            cost_usd=float(u.get("cost_usd") or 0.0),
+                            cost_usd=(
+                                float(call_cost)
+                                if isinstance(call_cost, (int, float)) and not isinstance(call_cost, bool)
+                                else None
+                            ),
                             tokens=int(u.get("tokens") or 0),
                             latency_s=float(u.get("latency_s") or 0.0),
                         )
                     except Exception:  # noqa: BLE001
                         pass
         try:
-            return st.finish(winner=winner, ko=ko, report_path=report_path)
+            return st.finish(winner=winner, ko=ko, report_path=report_path, edge=edge)
         except TypeError:
             return st.finish(winner, ko, points, usage, report_path)
 
@@ -894,16 +992,20 @@ def _live_call(live_state, method: str, *args, **kwargs) -> None:
         pass
 
 
-def _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko) -> str:
+def _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko, edge=None) -> str:
     """Prefer arcade-artist's render module; fall back to the built-in renderer."""
     try:
         try:
             from . import render as _render
         except ImportError:
             import render as _render  # type: ignore
-        return _render.render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko)
+        try:
+            return _render.render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko, edge=edge)
+        except TypeError:
+            # render.py may not have adopted the optional `edge` field yet.
+            return _render.render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko)
     except Exception:  # noqa: BLE001 — missing/broken renderer falls back
-        return _render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko)
+        return _render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko, edge=edge)
 
 
 @_guard
@@ -939,6 +1041,7 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         temperature = float(args.get("temperature", _cfg("temperature", 0)))
         max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
         budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
+        token_budget = int(args.get("budget_tokens", _cfg("max_fight_tokens", 400000)))
         timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
         pace_ms = float(args.get("pace_ms", _cfg("pace_ms", 0)) or 0)
         max_rate_wait_s = float(args.get("max_rate_wait_s", _cfg("max_rate_wait_s", 120)) or 0)
@@ -965,9 +1068,11 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         ],
         "sudden_death_task": plan.get("sudden_death_task"),
     }
+    live_card = dict(live_card)
+    # Sudden death is fought up front but only *shown* when a tie uses it
+    # (kombat_score_answers rebuilds live.json with the SD round then).
+    live_card.pop("sudden_death_task", None)
     live_rounds = {tid: r["id"] for r in plan["rounds"] for tid in r["tasks"]}
-    if plan.get("sudden_death_task"):
-        live_rounds.setdefault(str(plan["sudden_death_task"]), "SD")
     live = _live_state(
         _data_dir(), fight_id, live_card,
         {"a": fighter_a, "b": fighter_b}, live_rounds,
@@ -995,14 +1100,70 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
     meta: dict[str, dict[str, dict]] = {fighter_a: {}, fighter_b: {}}
     errors: list[dict] = []
     totals = {
-        fighter_a: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0, "waited_s": 0.0},
-        fighter_b: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0, "waited_s": 0.0},
+        fighter_a: {
+            "cost_usd": 0.0, "cost_source": "estimated", "tokens": 0,
+            "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0, "waited_s": 0.0,
+        },
+        fighter_b: {
+            "cost_usd": 0.0, "cost_source": "estimated", "tokens": 0,
+            "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0, "waited_s": 0.0,
+        },
     }
+    sd_usage = {
+        fighter_a: {"cost_usd": 0.0, "cost_source": "unknown", "tokens": 0,
+                    "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0},
+        fighter_b: {"cost_usd": 0.0, "cost_source": "unknown", "tokens": 0,
+                    "input_tokens": 0, "output_tokens": 0, "latency_s": 0.0},
+    }
+    cost_sources = {fighter_a: set(), fighter_b: set()}
     budget_exceeded = False
+    budget_reason = None
 
-    def call_pair(tid: str, fighter: str) -> None:
+    def _spent_usd() -> float:
+        return sum(
+            float(slot["cost_usd"])
+            for slot in totals.values()
+            if isinstance(slot.get("cost_usd"), (int, float))
+        )
+
+    def _spent_tokens() -> int:
+        return sum(int(slot.get("tokens") or 0) for slot in totals.values())
+
+    def _note_cost(fighter: str, usage: dict) -> float | None:
+        """Fold one call's usage into the fighter totals; returns its cost."""
+        slot = totals[fighter]
+        cost = usage.get("cost_usd")
+        source = str(usage.get("cost_source") or "unknown")
+        cost_sources[fighter].add(source)
+        try:
+            slot["input_tokens"] += int(usage.get("input_tokens") or 0)
+            slot["output_tokens"] += int(usage.get("output_tokens") or 0)
+            slot["tokens"] += int(
+                usage.get("total_tokens") or usage.get("output_tokens") or 0
+            )
+        except (TypeError, ValueError):
+            pass
+        if cost is None or source == "unknown":
+            slot["cost_usd"] = None
+        else:
+            try:
+                if slot.get("cost_usd") is not None:
+                    slot["cost_usd"] = round(float(slot["cost_usd"]) + float(cost), 9)
+            except (TypeError, ValueError):
+                slot["cost_usd"] = None
+        return cost if isinstance(cost, (int, float)) else None
+
+    def _check_budget() -> None:
+        nonlocal budget_exceeded, budget_reason
+        if _spent_usd() > budget:
+            budget_exceeded = True
+            budget_reason = f"USD cap ${budget:.4f} exceeded"
+        elif _spent_tokens() > token_budget:
+            budget_exceeded = True
+            budget_reason = f"token cap {token_budget} exceeded"
+
+    def call_pair(tid: str, fighter: str, *, is_sudden_death: bool = False) -> None:
         """One (task, fighter) call; updates answers/meta/totals/live. Raises PermissionError."""
-        nonlocal budget_exceeded
         task = tasks_by_id[tid]
         side = "a" if fighter == fighter_a else "b"
         if pace_s:
@@ -1023,23 +1184,42 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
             "waited_s": waited,
             "error": err,
             "status": "errored" if err else "scored",
+            "sudden_death": bool(is_sudden_death),
         }
         totals[fighter]["latency_s"] += latency
         totals[fighter]["waited_s"] += waited
-        totals[fighter]["tokens"] += int(usage.get("total_tokens") or usage.get("output_tokens") or 0)
-        totals[fighter]["cost_usd"] += float(usage.get("cost_usd") or 0.0)
+        cost = _note_cost(fighter, usage) if usage else None
+        if is_sudden_death:
+            sd_slot = sd_usage[fighter]
+            sd_slot["latency_s"] += latency
+            try:
+                sd_slot["input_tokens"] += int(usage.get("input_tokens") or 0)
+                sd_slot["output_tokens"] += int(usage.get("output_tokens") or 0)
+                sd_slot["tokens"] += int(
+                    usage.get("total_tokens") or usage.get("output_tokens") or 0
+                )
+            except (TypeError, ValueError):
+                pass
+            if usage.get("cost_usd") is None:
+                sd_slot["cost_usd"] = None
+            elif sd_slot.get("cost_usd") is not None:
+                try:
+                    sd_slot["cost_usd"] = round(float(sd_slot["cost_usd"]) + float(usage["cost_usd"]), 9)
+                except (TypeError, ValueError):
+                    sd_slot["cost_usd"] = None
+            if usage.get("cost_source"):
+                sd_slot["cost_source"] = usage["cost_source"]
         _live_call(
             live, "task_update", tid, side,
             state="error" if err else "done",
             score=None,
             latency_s=latency,
-            cost_usd=float(usage.get("cost_usd") or 0.0),
+            cost_usd=cost,
             detail=(err or "")[:400],
         )
         if err:
             errors.append({"task": tid, "fighter": fighter, "error": err})
-        if totals[fighter]["cost_usd"] > budget:
-            budget_exceeded = True
+        _check_budget()
 
     for rnd in plan["rounds"]:
         _live_call(live, "round_state", rnd["id"], "fighting")
@@ -1068,6 +1248,28 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
                 break
         if budget_exceeded:
             break
+
+    # Sudden death is fetched up front (one cheap extra task per fighter) so a
+    # tie after the Championship can be decided without a second run. Scoring
+    # only uses these answers on a points tie.
+    sd_task = str(plan.get("sudden_death_task") or "").strip() or None
+    round_task_ids = {tid for rnd in plan["rounds"] for tid in rnd["tasks"]}
+    if sd_task and sd_task in round_task_ids:
+        sd_task = None  # already a normal round task; no separate SD fetch
+    if sd_task and sd_task in tasks_by_id and not budget_exceeded:
+        for fighter in (fighter_a, fighter_b):
+            try:
+                call_pair(sd_task, fighter, is_sudden_death=True)
+            except PermissionError as exc:
+                _live_call(live, "error", f"host refused model override: {exc}")
+                if board is not None:
+                    board.abort()
+                return _err(
+                    f"Host refused the model override for sudden death: {exc}. "
+                    "Enable plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
+                )
+            if budget_exceeded:
+                break
 
     # Bounded auto-rematch of errored (task, fighter) pairs inside this fight.
     rematch_passes_done = 0
@@ -1099,6 +1301,45 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
             if not errors:
                 break
 
+    # Aggregate cost provenance per fighter (unknown beats estimated beats host).
+    for fighter in (fighter_a, fighter_b):
+        srcs = cost_sources[fighter]
+        if "unknown" in srcs or not srcs:
+            totals[fighter]["cost_source"] = "unknown"
+        elif "estimated" in srcs:
+            totals[fighter]["cost_source"] = "estimated"
+        else:
+            totals[fighter]["cost_source"] = "host"
+
+    # Budget stop: every pair that was never attempted is skipped/errored, not failed.
+    planned_pairs = [
+        (tid, fighter)
+        for rnd in plan["rounds"]
+        for tid in rnd["tasks"]
+        for fighter in (fighter_a, fighter_b)
+    ]
+    if sd_task:
+        planned_pairs.extend((sd_task, fighter) for fighter in (fighter_a, fighter_b))
+    for tid, fighter in planned_pairs:
+        if tid in meta.get(fighter, {}):
+            continue
+        reason = f"not attempted: {budget_reason}" if budget_exceeded else "not attempted"
+        meta[fighter][tid] = {
+            "latency_s": 0.0, "usage": {}, "attempts": 0, "waited_s": 0.0,
+            "error": reason, "status": "skipped", "sudden_death": tid == sd_task,
+        }
+        answers[fighter].setdefault(tid, "")
+        errors.append({"task": tid, "fighter": fighter, "error": reason, "status": "skipped"})
+
+    budget_info = {
+        "exceeded": bool(budget_exceeded),
+        "reason": budget_reason,
+        "cap_usd": budget,
+        "cap_tokens": token_budget,
+        "spent_usd": round(_spent_usd(), 9),
+        "spent_tokens": _spent_tokens(),
+    }
+
     fight = {
         "fight_id": fight_id,
         "fighter_a": fighter_a,
@@ -1107,12 +1348,14 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         "card": card,
         "plan_rounds": plan["rounds"],
         "sudden_death_task": plan.get("sudden_death_task"),
+        "sudden_death_usage": sd_usage,
         "answers_a": answers[fighter_a],
         "answers_b": answers[fighter_b],
         "meta_a": meta[fighter_a],
         "meta_b": meta[fighter_b],
         "errors": errors,
         "usage": totals,
+        "budget": budget_info,
         "budget_exceeded": budget_exceeded,
         "kanban": board.ids if board is not None else None,
         "rematch_passes": rematch_passes_done,
@@ -1136,6 +1379,9 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         meta_b=meta[fighter_b],
         errors=errors,
         usage=totals,
+        sudden_death_task=fight.get("sudden_death_task"),
+        sudden_death_usage=sd_usage,
+        budget=budget_info,
         budget_exceeded=budget_exceeded,
         rematch_passes=rematch_passes_done,
         waited_s=fight["waited_s"],
@@ -1180,6 +1426,7 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
         temperature = float(args.get("temperature", _cfg("temperature", 0)))
         max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
         budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
+        token_budget = int(args.get("budget_tokens", _cfg("max_fight_tokens", 400000)))
         timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
         pace_ms = float(args.get("pace_ms", _cfg("pace_ms", 0)) or 0)
         max_rate_wait_s = float(args.get("max_rate_wait_s", _cfg("max_rate_wait_s", 120)) or 0)
@@ -1195,6 +1442,7 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
     usage = dict(last.get("usage") or {})
     rematched, still_failing = [], []
     spend = 0.0
+    tokens_spent = 0
 
     for err in errors:
         tid, fighter = err.get("task"), err.get("fighter")
@@ -1214,6 +1462,7 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
                 "Check plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
             )
         spend += float(call_usage.get("cost_usd") or 0.0)
+        tokens_spent += int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
         if call_err:
             still_failing.append({"task": tid, "fighter": fighter, "error": call_err})
             answers[fighter][tid] = text
@@ -1224,9 +1473,18 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
             meta[fighter][tid] = {"error": None, "attempts": attempts, "latency_s": 0, "usage": call_usage}
         slot = usage.setdefault(fighter, {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0})
         slot["waited_s"] = round(float(slot.get("waited_s") or 0.0) + float(call_waited or 0.0), 3)
-        slot["cost_usd"] = float(slot.get("cost_usd") or 0.0) + float(call_usage.get("cost_usd") or 0.0)
+        call_cost = call_usage.get("cost_usd")
+        if call_cost is None:
+            slot["cost_usd"] = None
+        elif slot.get("cost_usd") is not None:
+            try:
+                slot["cost_usd"] = round(float(slot["cost_usd"]) + float(call_cost), 9)
+            except (TypeError, ValueError):
+                slot["cost_usd"] = None
         slot["tokens"] = int(slot.get("tokens") or 0) + int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
-        if spend > budget:
+        slot["input_tokens"] = int(slot.get("input_tokens") or 0) + int(call_usage.get("input_tokens") or 0)
+        slot["output_tokens"] = int(slot.get("output_tokens") or 0) + int(call_usage.get("output_tokens") or 0)
+        if spend > budget or tokens_spent > token_budget:
             still_failing.extend(e for e in errors if e not in still_failing and e not in rematched)
             break
 
@@ -1529,7 +1787,7 @@ def _fraction(score: dict):
 
 # ---------------------------------------------------------------- scoring
 
-def _render_report(fighter_a: str, fighter_b: str, rounds_out: list[dict], usage: dict, winner: str, ko: bool) -> str:
+def _render_report(fighter_a: str, fighter_b: str, rounds_out: list[dict], usage: dict, winner: str, ko: bool, edge: dict | None = None) -> str:
     esc = html.escape
     sections = []
     for rnd in rounds_out:
@@ -1558,11 +1816,19 @@ def _render_report(fighter_a: str, fighter_b: str, rounds_out: list[dict], usage
         )
     usage_rows = ""
     for fighter, u in (usage or {}).items():
+        u = u if isinstance(u, dict) else {}
+        cost = u.get("cost_usd")
+        cost_txt = f"${float(cost):.4f}" if isinstance(cost, (int, float)) and not isinstance(cost, bool) else "n/a"
         usage_rows += (
             f"<tr><td>{esc(fighter)}</td><td>{u.get('latency_s', 0):.1f}s</td>"
-            f"<td>{u.get('tokens', 0)}</td><td>${u.get('cost_usd', 0.0):.4f}</td></tr>"
+            f"<td>{u.get('tokens', 0)}</td><td>{cost_txt}</td></tr>"
         )
-    winner_line = f"{esc(winner)} wins by K.O." if ko else f"{esc(winner)} wins the fight"
+    if winner == "draw":
+        winner_line = "The fight is a draw"
+        if edge and edge.get("fighter"):
+            winner_line += f" — {esc(edge['fighter'])} has the {esc(edge.get('label') or 'efficiency edge')}: {esc(edge.get('reason') or '')}"
+    else:
+        winner_line = f"{esc(winner)} wins by K.O." if ko else f"{esc(winner)} wins the fight"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Model Kombat — {esc(fighter_a)} vs {esc(fighter_b)}</title>
 <style>
@@ -1627,9 +1893,10 @@ def _score_task_side(task: dict, answer: str, allow_exec: bool) -> dict:
 def _meta_detail(meta: dict, tid: str) -> dict:
     item = (meta or {}).get(tid) or {}
     usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
+    cost = usage.get("cost_usd")
     return {
         "latency_s": float(item.get("latency_s") or 0.0),
-        "cost_usd": float(usage.get("cost_usd") or 0.0),
+        "cost_usd": float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
         "attempts": item.get("attempts"),
         "waited_s": float(item.get("waited_s") or 0.0),
     }
@@ -1640,6 +1907,67 @@ def _r3_round(rounds_out: list[dict]) -> dict | None:
         if rnd.get("id") == "R3":
             return rnd
     return None
+
+
+def _num_or_none(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict) -> dict:
+    """Tie-break display for a draw: faster latency, then fewer output tokens, then cost.
+
+    This is explicitly **not** a win — it never changes ``winner`` or the ladder.
+    """
+    usage = usage if isinstance(usage, dict) else {}
+    ua = usage.get(fighter_a) if isinstance(usage.get(fighter_a), dict) else {}
+    ub = usage.get(fighter_b) if isinstance(usage.get(fighter_b), dict) else {}
+
+    def latency(u):
+        return _num_or_none(u.get("latency_s"))
+
+    def out_tokens(u):
+        val = _num_or_none(u.get("output_tokens"))
+        if val is None:
+            val = _num_or_none(u.get("tokens"))
+        return val
+
+    def cost(u):
+        return _num_or_none(u.get("cost_usd"))
+
+    metrics = (
+        ("latency", latency, "faster total latency"),
+        ("output_tokens", out_tokens, "fewer output tokens"),
+        ("cost", cost, "lower cost"),
+    )
+    for _key, getter, phrase in metrics:
+        va, vb = getter(ua), getter(ub)
+        if va is None or vb is None or va == vb:
+            continue
+        winner = fighter_a if va < vb else fighter_b
+        if _key == "latency":
+            detail = f"{va:.3f}s vs {vb:.3f}s"
+        elif _key == "output_tokens":
+            detail = f"{int(va)} vs {int(vb)} output tokens"
+        else:
+            detail = f"${va:.4f} vs ${vb:.4f}"
+        return {
+            "fighter": winner,
+            "metric": _key,
+            "reason": f"{phrase} ({detail}) — efficiency edge (not a win)",
+            "label": "efficiency edge (not a win)",
+            "a": va,
+            "b": vb,
+        }
+    return {
+        "fighter": None,
+        "metric": None,
+        "reason": "dead heat — identical latency, output tokens and cost",
+        "label": "efficiency edge (not a win)",
+        "a": None,
+        "b": None,
+    }
 
 
 @_guard
@@ -1839,6 +2167,9 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
     else:
         winner = "draw"
 
+    # Draw display: an efficiency edge is surfaced but never counts as a win.
+    edge = _efficiency_edge(fighter_a, fighter_b, usage) if winner == "draw" else None
+
     # Championship K.O.
     ko = False
     r3 = _r3_round(rounds_out)
@@ -1897,7 +2228,7 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             report_path = report_dir / f"kombat-{stamp}.html"
             report_path.write_text(
-                _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko),
+                _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko, edge=edge),
                 encoding="utf-8",
             )
             report_path = str(report_path)
@@ -1914,6 +2245,10 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         ],
         "sudden_death_task": plan.get("sudden_death_task"),
     }
+    live_card = dict(live_card)
+    # Sudden death appears on the board/report only when a tie actually used it.
+    if not any(rnd.get("id") == "SD" for rnd in rounds_out):
+        live_card.pop("sudden_death_task", None)
     live_rounds = {t["id"]: r["id"] for r in rounds_out for t in r["tasks"]}
     live = _live_state(
         _data_dir(), fight_id, live_card,
@@ -1950,6 +2285,7 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         "lanes": (plan.get("card") or {}).get("lanes"),
         "winner": winner,
         "ko": ko,
+        "edge": edge,
         "sudden_death_winner": sd_winner,
         "points": points,
         "usage": usage,
@@ -2020,7 +2356,12 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
             ],
             "usage": {
                 fighter: {
-                    "cost_usd": float((u or {}).get("cost_usd") or 0.0),
+                    "cost_usd": (
+                        float(u["cost_usd"])
+                        if isinstance(u, dict) and isinstance(u.get("cost_usd"), (int, float))
+                        and not isinstance(u.get("cost_usd"), bool)
+                        else None
+                    ),
                     "tokens": int((u or {}).get("tokens") or 0),
                     "latency_s": float((u or {}).get("latency_s") or 0.0),
                 }
@@ -2033,7 +2374,7 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         ladder_error = f"{type(exc).__name__}: {exc}"
 
     # Live finish + kanban completion (both best-effort).
-    _live_call(live, "finish", winner, ko, points, usage, report_path)
+    _live_call(live, "finish", winner, ko, points, usage, report_path, edge=edge)
 
     kanban_note = None
     try:
@@ -2051,6 +2392,7 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         card=plan.get("card"),
         winner=winner,
         ko=ko,
+        edge=edge,
         sudden_death_winner=sd_winner,
         ko_rounds=ko_rounds,
         points=points,
@@ -2097,9 +2439,150 @@ def _recommend_lane(lane: str, candidates=None) -> tuple[dict | None, str | None
         return None, f"ladder unavailable: {type(exc).__name__}: {exc}"
 
 
+def _resolve_scout_card(value):
+    """Resolve ``card`` as a stored card id, a card object, or ``{"id": ...}``.
+
+    Returns ``(card_or_None, looks_like_card_id)``. It never classifies text;
+    callers fall back to the kanban task-id path only when this returns None.
+    """
+    if isinstance(value, dict):
+        if isinstance(value.get("rounds"), list) or isinstance(value.get("lanes"), list):
+            return value, True
+        nested = value.get("card")
+        if nested is not None and nested is not value:
+            return _resolve_scout_card(nested)
+        nested_id = value.get("id")
+        if isinstance(nested_id, str) and not value.get("lanes"):
+            return _resolve_scout_card(nested_id)
+        return None, False
+    if not isinstance(value, str):
+        return None, False
+    text = value.strip()
+    if not text:
+        return None, False
+    if text.startswith("{"):
+        try:
+            return _resolve_scout_card(json.loads(text))
+        except (json.JSONDecodeError, TypeError):
+            return None, False
+    data = _read_json_file(_cards_path(), {})
+    card = data.get(text) if isinstance(data, dict) else None
+    if isinstance(card, dict) and (card.get("rounds") or card.get("lanes")):
+        return card, True
+    return None, text.startswith("card-")
+
+
+def _card_lane_weights(card: dict) -> list[dict]:
+    """Normalise a card's lane weights: ``lane_weights`` or plain ``lanes``."""
+    weights: list[dict] = []
+    raw = card.get("lane_weights")
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and item.get("lane"):
+                try:
+                    weight = float(item.get("weight", 1.0))
+                except (TypeError, ValueError):
+                    weight = 1.0
+                if weight > 0:
+                    weights.append({"lane": str(item["lane"]), "weight": weight})
+    if not weights:
+        for lane in card.get("lanes") or []:
+            if isinstance(lane, str) and lane:
+                weights.append({"lane": lane, "weight": 1.0})
+    return weights
+
+
+def _recommend_card(card: dict, candidates=None) -> dict:
+    """Per-lane picks plus one overall pick for a scout card.
+
+    Overall pick = the model with the highest **summed weighted Elo margin**,
+    ``sum(lane_weight * elo(model, lane))`` over the card's lanes; lanes the
+    model has no Elo in contribute nothing. Documented in the tool schema too.
+    """
+    weights = _card_lane_weights(card)
+    per_lane: list[dict] = []
+    warnings: list[str] = []
+    weighted: dict[str, float] = {}
+    contributions: dict[str, dict] = {}
+    for item in weights:
+        lane, weight = item["lane"], item["weight"]
+        rec, rec_err = _recommend_lane(lane, candidates)
+        if rec_err:
+            warnings.append(f"{lane}: {rec_err}")
+            rec = None
+        rec = rec or {}
+        rows = {
+            str(row.get("model")): row
+            for row in (rec.get("ranking") or [])
+            if isinstance(row, dict) and row.get("model") is not None
+        }
+        pick = rec.get("pick")
+        pick_row = rows.get(str(pick)) if pick else None
+        pick_elo = None
+        if isinstance(pick_row, dict):
+            pick_elo = pick_row.get("elo")
+        if pick_elo is None:
+            pick_elo = rec.get("elo")
+        if pick_elo is None and pick:
+            lane_elo = _elo_for(lane, str(pick))
+            pick_elo = lane_elo
+        for model, row in rows.items():
+            elo = row.get("elo")
+            if not isinstance(elo, (int, float)) or isinstance(elo, bool):
+                continue
+            weighted[model] = round(weighted.get(model, 0.0) + weight * float(elo), 6)
+            contributions.setdefault(model, {})[lane] = round(weight * float(elo), 6)
+        per_lane.append(
+            {
+                "lane": lane,
+                "weight": weight,
+                "pick": pick,
+                "short": _short_name(pick) if pick else None,
+                "elo": pick_elo,
+                "margin": rec.get("margin"),
+                "confidence": rec.get("confidence") or "none",
+                "fights": rec.get("fights"),
+                "cost_per_point": rec.get("cost_per_point"),
+                "cost_per_point_display": rec.get("cost_per_point_display") or "n/a",
+                "runner_up": rec.get("runner_up"),
+                "why": rec.get("why"),
+            }
+        )
+
+    ranked = sorted(
+        weighted.items(),
+        key=lambda kv: (-kv[1], kv[0]),
+    )
+    overall = None
+    if ranked:
+        pick, score = ranked[0]
+        runner_score = ranked[1][1] if len(ranked) > 1 else None
+        overall = {
+            "pick": pick,
+            "short": _short_name(pick),
+            "score": round(score, 6),
+            "margin": round(score - runner_score, 6) if runner_score is not None else 0.0,
+            "runner_up": ranked[1][0] if len(ranked) > 1 else None,
+            "per_lane": contributions.get(pick, {}),
+            "confidence": "low" if len(ranked) < 2 else "medium",
+        }
+        if len(ranked) < 2:
+            warnings.append("overall pick has no runner-up (ladder thin on this card's lanes)")
+    else:
+        warnings.append("no ladder data for this card's lanes yet — run a fight first")
+    return {
+        "per_lane": per_lane,
+        "overall": overall,
+        "warnings": warnings,
+        "method": (
+            "overall = argmax_model sum(lane_weight * elo(model, lane)) across the card's lanes"
+        ),
+    }
+
+
 @_guard
 def kombat_recommend(args: dict, **kwargs) -> str:
-    """Ladder-backed knockout pick per lane, or per open kanban card (board mode)."""
+    """Ladder-backed knockout pick per lane, per scout card, or per open card (board mode)."""
     if args.get("ladder") or str(args.get("mode") or "").lower() == "ladder":
         return _ok(mode="ladder", ladder=_ladder_json())
 
@@ -2157,12 +2640,58 @@ def kombat_recommend(args: dict, **kwargs) -> str:
                    written=written, warnings=warnings)
 
     lane = args.get("lane")
+    card_arg = args.get("card")
+
+    # Scout-card mode: a stored card id ('card-...') or a scouted card object.
+    if not lane and card_arg is not None:
+        card, looks_like_card = _resolve_scout_card(card_arg)
+        if card is not None:
+            result = _recommend_card(card, candidates)
+            overall = result.get("overall") or {}
+            payload = {
+                "mode": "card",
+                "card_id": card.get("id"),
+                "title": card.get("title"),
+                "lanes": card.get("lanes") or [w["lane"] for w in _card_lane_weights(card)],
+                "lane_weights": _card_lane_weights(card),
+                "per_lane": result["per_lane"],
+                "overall": overall or None,
+                "pick": overall.get("pick"),
+                "short": overall.get("short"),
+                "margin": overall.get("margin"),
+                "confidence": overall.get("confidence") or "none",
+                "method": result["method"],
+                "warnings": result["warnings"],
+                "cost_per_point": None,
+                "cost_per_point_display": "n/a",
+            }
+            if overall.get("pick"):
+                lane_view = next(
+                    (row for row in result["per_lane"] if row.get("pick") == overall["pick"]),
+                    None,
+                )
+                if lane_view:
+                    payload["why"] = (
+                        f"{overall['short']} has the highest summed weighted Elo margin "
+                        f"({overall['score']:.1f}) across this card's lanes."
+                    )
+                    payload["cost_per_point"] = lane_view.get("cost_per_point")
+                    payload["cost_per_point_display"] = (
+                        lane_view.get("cost_per_point_display") or "n/a"
+                    )
+            return _ok(**payload)
+        if looks_like_card:
+            return _err(
+                f"fight card {str(card_arg)!r} not found (call kombat_scout to build and store one).",
+                mode="card",
+            )
+        # Not a stored card: fall through to the kanban task-id classification.
+
     text = args.get("input")
     if isinstance(text, dict):
         text = text.get("input") or text.get("text") or ""
-    card_id = args.get("card")
-    if not lane and card_id:
-        task, warn = _scout_kanban_task(str(card_id))
+    if not lane and card_arg:
+        task, warn = _scout_kanban_task(str(card_arg))
         if task:
             text = _scout_task_text(task) or text
     classified = []

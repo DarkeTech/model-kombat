@@ -43,8 +43,11 @@ body{
 .frame{position:relative;border:3px solid var(--cyan);border-radius:4px;background:#0b0b1a;
   box-shadow:0 0 0 2px #050508,0 0 22px rgba(0,229,255,.28),inset 0 0 40px rgba(255,46,166,.08);
   padding:8px 12px;clip-path:polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%)}
-h1{margin:0 0 2px;font-size:1.55rem;letter-spacing:.16em;text-align:center;
-  color:var(--cyan);text-shadow:2px 2px 0 var(--magenta),4px 4px 0 rgba(0,0,0,.55)}
+.wordmark{display:flex;align-items:center;justify-content:center;gap:10px;margin:0 0 2px}
+.wordmark svg{flex:0 0 auto}
+.wordmark .wm-text{font-size:1.55rem;font-weight:400;letter-spacing:.30em;text-transform:uppercase;
+ color:var(--ink);-webkit-text-stroke:1px var(--cyan);
+ text-shadow:0 0 10px rgba(0,229,255,.35)}
 .tagline{text-align:center;margin:0 0 8px;color:var(--magenta);letter-spacing:.28em;
   text-transform:uppercase;font-size:.65rem}
 .hp-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:start;margin:2px 0}
@@ -75,9 +78,11 @@ th{background:#12122a;color:var(--cyan);letter-spacing:.06em}
 td small{display:block;color:#b9bcce;font-size:.68rem;margin-top:1px;word-break:break-word}
 .hit{animation:hitflash .5s steps(2) 2}
 @keyframes hitflash{0%{box-shadow:inset 0 0 0 2px #ffffff}50%{box-shadow:inset 0 0 0 2px transparent}}
-td.won{background:rgba(0,229,255,.10)}
-td.won::before{content:"HIT! ";color:var(--cyan);font-weight:700}
-td.result-draw{color:var(--cyan);font-weight:700;text-transform:uppercase}
+td.won-a{background:rgba(0,229,255,.10)}
+td.won-a::before{content:"HIT! ";color:var(--cyan);font-weight:700}
+td.won-b{background:rgba(255,46,166,.10)}
+td.won-b::before{content:"HIT! ";color:var(--magenta);font-weight:700}
+td.result-draw{color:#cfd2e8;font-weight:700;text-transform:uppercase}
 td.result-error{color:#ff8a7a;font-weight:700}
 td.result-skipped{color:#9db4ff;font-weight:700}
 .state{display:inline-block;border:1px solid currentColor;padding:0 4px;
@@ -99,7 +104,7 @@ footer{margin-top:4px;color:#9a9cb2;font-size:.68rem;text-align:center}
 :focus-visible{outline:3px solid var(--cyan);outline-offset:2px}
 @media (max-height:860px){
   .stage{padding-top:2px;padding-bottom:2px}
-  h1{font-size:1.3rem}.tagline{margin-bottom:4px}
+  .wordmark .wm-text{font-size:1.3rem}.tagline{margin-bottom:4px}
   .hp-track{height:10px}.ko{font-size:1.45rem;padding:2px 16px}
   .winner-card .who{font-size:.9rem}table{font-size:.72rem}
   th,td{padding:2px 5px}
@@ -107,7 +112,7 @@ footer{margin-top:4px;color:#9a9cb2;font-size:.68rem;text-align:center}
 }
 @media (max-width:700px){
   .hp-row{grid-template-columns:1fr;gap:4px}.vs{justify-self:center}
-  .stage{padding:6px 6px 8px}.frame{padding:8px 9px}h1{font-size:1.25rem}
+  .stage{padding:6px 6px 8px}.frame{padding:8px 9px}.wordmark .wm-text{font-size:1.25rem}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
@@ -118,6 +123,22 @@ footer{margin-top:4px;color:#9a9cb2;font-size:.68rem;text-align:center}
 _ARCADE_JS = """
 (function(){var k=document.querySelector('.ko');if(k){k.setAttribute('role','status');}})();
 """
+
+# Original wordmark: thin-outlined monospace caps with a single cyan glow,
+# flanked by a >+< crossed-bars emblem (inline SVG, no third-party marks).
+_WORDMARK_HTML = (
+    '<h1 class="wordmark">'
+    '<svg width="30" height="15" viewBox="0 0 72 36" aria-hidden="true" focusable="false">'
+    '<path d="M4 6 L20 18 L4 30" fill="none" stroke="#00e5ff" stroke-width="3" stroke-linecap="square"/>'
+    '<path d="M68 6 L52 18 L68 30" fill="none" stroke="#ff2ea6" stroke-width="3" stroke-linecap="square"/>'
+    '<path d="M36 9 V27 M28 18 H44" fill="none" stroke="#e8fbff" stroke-width="3" stroke-linecap="square"/></svg>'
+    '<span class="wm-text">Model Kombat</span>'
+    '<svg width="30" height="15" viewBox="0 0 72 36" aria-hidden="true" focusable="false" style="transform:scaleX(-1)">'
+    '<path d="M4 6 L20 18 L4 30" fill="none" stroke="#00e5ff" stroke-width="3" stroke-linecap="square"/>'
+    '<path d="M68 6 L52 18 L68 30" fill="none" stroke="#ff2ea6" stroke-width="3" stroke-linecap="square"/>'
+    '<path d="M36 9 V27 M28 18 H44" fill="none" stroke="#e8fbff" stroke-width="3" stroke-linecap="square"/></svg>'
+    '</h1>'
+)
 
 
 def _page(title: str, body: str) -> str:
@@ -234,7 +255,7 @@ def _arena_task_row(task: Mapping[str, Any], name_a: str, name_b: str) -> str:
             and float(score) > float(other.get("score") or 0)
         ):
             won = True
-        cls = ' class="won hit"' if won else ""
+        cls = f' class="won-{side} hit"' if won else ""
         return (
             f"<td{cls}>{_esc(name)} <b>{_esc(score_txt)}</b> "
             f'<span class="state {state}">{_esc(state)}</span>'
@@ -373,7 +394,7 @@ def render_arena_preview(live: dict) -> str:
         if isinstance(u, Mapping):
             usage_rows[key] = u
     body = (
-        "<h1>MODEL KOMBAT</h1><p class=\"tagline\">Head-to-Head Benchmark Arena</p>"
+        f"{_WORDMARK_HTML}<p class=\"tagline\">Head-to-Head Benchmark Arena</p>"
         '<div class="hp-row">'
         f"{_hp_block('a', name_a, id_a, hp_a)}"
         '<div class="vs">VS</div>'
@@ -442,8 +463,8 @@ def render_report(
             else:
                 verdict = "—"
             ko_note = ' — <b style="color:#ff2ea6">K.O.</b>' if r.get("ko") else ""
-            attr_a = ' class="won hit"' if (fa is not None and fb is not None and fa > fb) else ""
-            attr_b = ' class="won hit"' if (fa is not None and fb is not None and fb > fa) else ""
+            attr_a = ' class="won-a hit"' if (fa is not None and fb is not None and fa > fb) else ""
+            attr_b = ' class="won-b hit"' if (fa is not None and fb is not None and fb > fa) else ""
 
             def _score_cell(score: Mapping[str, Any], attr: str) -> str:
                 details = score.get("details") or []
@@ -472,7 +493,7 @@ def render_report(
     ko_html = '<div class="ko-wrap"><span class="ko">K.O.</span></div>' if ko else ""
     winner_line = f"{_esc(winner)} wins by K.O." if ko else f"{_esc(winner)} wins the fight"
     body = (
-        "<h1>MODEL KOMBAT</h1><p class=\"tagline\">Head-to-Head Benchmark Arena · Final Scorecard</p>"
+        f"{_WORDMARK_HTML}<p class=\"tagline\">Head-to-Head Benchmark Arena · Final Scorecard</p>"
         '<div class="hp-row">'
         f"{_hp_block('a', fighter_a, fighter_a, hp_a)}"
         '<div class="vs">VS</div>'
