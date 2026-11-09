@@ -1,29 +1,39 @@
-"""Tool handlers for Model Kombat.
+"""Tool handlers for Model Kombat (v0.2).
 
-Rules (Hermes plugin contract): handlers take (args: dict, **kwargs), return a JSON
-string always, never raise. The host ctx (for ctx.llm + state) is bound at register
-time via set_ctx() — handlers called outside a live Hermes session degrade with a
-clear error instead of crashing.
+Contract: handlers take (args: dict, **kwargs), return a JSON string always,
+never raise. Host ctx is bound at register time via set_ctx(); outside a live
+Hermes session handlers degrade with a clear error JSON.
+
+Scoring is mechanical: exact counts, numeric matches, synonym-aware phrase
+matches, and subprocess execution of model-written code (opt-in only).
 """
 
 from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 _CTX = None
+_DATA_DIR_OVERRIDE: Path | None = None  # tests only
 
 
 def set_ctx(ctx) -> None:
-    """Bound by register() in __init__.py so handlers can reach ctx.llm / ctx.state."""
     global _CTX
     _CTX = ctx
+
+
+def set_data_dir_override(path: Path | None) -> None:
+    """Tests only: point plugin-data writes at a temp dir."""
+    global _DATA_DIR_OVERRIDE
+    _DATA_DIR_OVERRIDE = path
 
 
 def _err(message: str, **extra) -> str:
@@ -34,12 +44,26 @@ def _ok(**payload) -> str:
     return json.dumps({"ok": True, **payload})
 
 
+def _load_suite() -> dict:
+    raw = json.loads((Path(__file__).parent / "tasks.json").read_text(encoding="utf-8"))
+    tasks = {t["id"]: t for t in raw["tasks"]}
+    return {
+        "rounds": raw.get("rounds", []),
+        "tasks": tasks,
+        "order": [t["id"] for t in raw["tasks"]],
+        "sudden_death_task": raw.get("sudden_death_task"),
+    }
+
+
 def _load_tasks() -> list[dict]:
-    path = Path(__file__).parent / "tasks.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    """Back-compat for older tests/callers: flat task list."""
+    suite = _load_suite()
+    return [suite["tasks"][tid] for tid in suite["order"]]
 
 
 def _data_dir() -> Path:
+    if _DATA_DIR_OVERRIDE is not None:
+        return _DATA_DIR_OVERRIDE
     try:
         from plugins.plugin_storage import plugin_data_dir  # type: ignore
 
@@ -48,33 +72,107 @@ def _data_dir() -> Path:
         return Path.home() / ".hermes" / "plugin-data" / "model-kombat"
 
 
+def _cfg(key: str, default=None):
+    """Read a plugin setting (settings form / config.yaml), with fallback."""
+    if _CTX is None or not hasattr(_CTX, "get_config"):
+        return default
+    try:
+        return _CTX.get_config(key, default=default)
+    except TypeError:
+        try:
+            return _CTX.get_config(key)
+        except Exception:
+            return default
+    except Exception:
+        return default
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 # ---------------------------------------------------------------- list tasks
 
 def kombat_list_tasks(args: dict, **kwargs) -> str:
     try:
-        tasks = _load_tasks()
+        suite = _load_suite()
         return _ok(
-            count=len(tasks),
+            rounds=[
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "points_per_task": r["points"],
+                    "tasks": r["tasks"],
+                }
+                for r in suite["rounds"]
+            ],
+            sudden_death_task=suite["sudden_death_task"],
             tasks=[
-                {"id": t["id"], "title": t["title"], "scorer": t["scorer"]}
-                for t in tasks
+                {
+                    "id": t["id"],
+                    "title": t["title"],
+                    "scorer": t["scorer"],
+                    "round": next(
+                        (r["id"] for r in suite["rounds"] if t["id"] in r["tasks"]), None
+                    ),
+                }
+                for t in (suite["tasks"][tid] for tid in suite["order"])
             ],
         )
-    except Exception as exc:  # never raise out of a handler
+    except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
 
 
 # ---------------------------------------------------------------- run a fight
 
-def _complete_text(result) -> str:
-    if isinstance(result, dict):
-        return str(result.get("text") or "")
-    return str(getattr(result, "text", "") or "")
+def _usage_of(result) -> dict:
+    usage = getattr(result, "usage", None)
+    if usage is None and isinstance(result, dict):
+        usage = result.get("usage")
+    if usage is None:
+        return {}
+    get = (lambda k: getattr(usage, k, None)) if not isinstance(usage, dict) else usage.get
+    out = {}
+    for key in ("input_tokens", "output_tokens", "total_tokens", "cost_usd"):
+        val = get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
+def _complete_with_retry(ctx, fighter: str, prompt: str, temperature: float, max_tokens: int, timeout_s: float):
+    """One retry on transient errors; PermissionError (trust gate) never retries."""
+    system = (
+        "You are a fighter in a model benchmark. Answer the task exactly as written, "
+        "following every format constraint. Do not add commentary about the benchmark."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
+    last_exc = None
+    for attempt in (1, 2):
+        try:
+            result = ctx.llm.complete(
+                messages,
+                model=fighter,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout_s,
+                purpose="model-kombat fight",
+            )
+            text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
+            return str(text or ""), _usage_of(result), attempt, None
+        except PermissionError:
+            raise
+        except Exception as exc:  # transient provider error — retry once
+            last_exc = exc
+    return "", {}, 2, str(last_exc)
 
 
 def kombat_run_fight(args: dict, **kwargs) -> str:
-    fighter_a = str(args.get("fighter_a") or "").strip()
-    fighter_b = str(args.get("fighter_b") or "").strip()
+    fighter_a = str(args.get("fighter_a") or _cfg("fighter_a", "") or "").strip()
+    fighter_b = str(args.get("fighter_b") or _cfg("fighter_b", "") or "").strip()
     if not fighter_a or not fighter_b:
         return _err("Both fighter_a and fighter_b model IDs are required.")
     if _CTX is None or not hasattr(_CTX, "llm"):
@@ -84,82 +182,116 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         )
 
     try:
-        tasks = _load_tasks()
+        suite = _load_suite()
     except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
 
     wanted = args.get("tasks")
     if wanted:
         wanted = {str(w).upper() for w in wanted}
-        tasks = [t for t in tasks if t["id"].upper() in wanted]
-    if not tasks:
+        order = [t for t in suite["order"] if t in wanted]
+    else:
+        order = list(suite["order"])
+    if not order:
         return _err("No matching tasks. Call kombat_list_tasks for valid IDs.")
 
-    temperature = args.get("temperature", 0)
     try:
-        temperature = float(temperature)
+        temperature = float(args.get("temperature", _cfg("temperature", 0)))
+        max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
+        budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
+        timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
     except (TypeError, ValueError):
-        return _err("temperature must be a number.")
-    max_tokens = args.get("max_tokens", 2000)
-    try:
-        max_tokens = int(max_tokens)
-    except (TypeError, ValueError):
-        return _err("max_tokens must be an integer.")
+        return _err("temperature/max_tokens/budget_usd/timeout_s must be numbers.")
 
-    system = (
-        "You are a fighter in a model benchmark. Answer the task exactly as written, "
-        "following every format constraint. Do not add commentary about the benchmark."
-    )
-    results: dict[str, dict[str, str]] = {fighter_a: {}, fighter_b: {}}
-    errors: list[str] = []
+    # Kanban scoreboard (display only; never fails the fight).
+    board = None
+    if bool(_cfg("show_on_kanban", True)):
+        try:
+            from . import kanban as _kb
 
-    for task in tasks:
+            board = _kb.Scoreboard(fighter_a, fighter_b, suite)
+            board.start()
+        except Exception:
+            board = None
+
+    answers: dict[str, dict[str, str]] = {fighter_a: {}, fighter_b: {}}
+    meta: dict[str, dict[str, dict]] = {fighter_a: {}, fighter_b: {}}
+    errors: list[dict] = []
+    totals = {fighter_a: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0},
+              fighter_b: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0}}
+    budget_exceeded = False
+
+    for tid in order:
+        task = suite["tasks"][tid]
+        round_id = next((r["id"] for r in suite["rounds"] if tid in r["tasks"]), None)
+        if board is not None:
+            board.round_fighting(round_id)
         for fighter in (fighter_a, fighter_b):
+            started = time.perf_counter()
             try:
-                res = _CTX.llm.complete(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": task["prompt"]},
-                    ],
-                    model=fighter,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    purpose=f"model-kombat fight {task['id']}",
+                text, usage, attempts, err = _complete_with_retry(
+                    _CTX, fighter, task["prompt"], temperature, max_tokens, timeout_s
                 )
-                results[fighter][task["id"]] = _complete_text(res)
             except PermissionError as exc:
+                if board is not None:
+                    board.abort()
                 return _err(
                     f"Host refused the model override: {exc}. "
                     "Enable it in config.yaml: plugins.entries.model-kombat.llm."
                     "allow_model_override: true (optionally restrict with allowed_models), "
                     "then retry the fight. Nothing was sent.",
-                    partial=results,
+                    partial={"answers_a": answers[fighter_a], "answers_b": answers[fighter_b]},
                 )
-            except Exception as exc:  # one fighter/task failing shouldn't kill the fight
-                errors.append(f"{task['id']} vs {fighter}: {exc}")
-                results[fighter][task["id"]] = ""
+            latency = round(time.perf_counter() - started, 3)
+            answers[fighter][tid] = text
+            meta[fighter][tid] = {
+                "latency_s": latency,
+                "usage": usage,
+                "attempts": attempts,
+                "error": err,
+            }
+            totals[fighter]["latency_s"] += latency
+            totals[fighter]["tokens"] += int(usage.get("total_tokens") or usage.get("output_tokens") or 0)
+            totals[fighter]["cost_usd"] += float(usage.get("cost_usd") or 0.0)
+            if err:
+                errors.append({"task": tid, "fighter": fighter, "error": err})
+            if totals[fighter]["cost_usd"] > budget:
+                budget_exceeded = True
+                break
+        if budget_exceeded:
+            break
 
-    # Remember the last fight so /kombat score can score it without re-pasting.
+    fight = {
+        "fighter_a": fighter_a,
+        "fighter_b": fighter_b,
+        "mode": "pure",
+        "answers_a": answers[fighter_a],
+        "answers_b": answers[fighter_b],
+        "meta_a": meta[fighter_a],
+        "meta_b": meta[fighter_b],
+        "errors": errors,
+        "usage": totals,
+        "budget_exceeded": budget_exceeded,
+        "kanban": board.ids if board is not None else None,
+    }
     try:
-        if _CTX is not None and hasattr(_CTX, "state"):
-            _CTX.state.set(
-                "last_fight",
-                {
-                    "fighter_a": fighter_a,
-                    "fighter_b": fighter_b,
-                    "answers_a": results[fighter_a],
-                    "answers_b": results[fighter_b],
-                },
-            )
+        if hasattr(_CTX, "state"):
+            _CTX.state.set("last_fight", fight)
     except Exception:
-        pass  # state is best-effort
+        pass
 
     return _ok(
         fighters=[fighter_a, fighter_b],
-        rounds=[t["id"] for t in tasks],
-        answers_a=results[fighter_a],
-        answers_b=results[fighter_b],
+        rounds=[t for t in order],
+        answers_a=answers[fighter_a],
+        answers_b=answers[fighter_b],
+        meta_a=meta[fighter_a],
+        meta_b=meta[fighter_b],
         errors=errors,
+        usage=totals,
+        budget_exceeded=budget_exceeded,
+        kanban=board.ids if board is not None else None,
+        kanban_errors=board.errors if board is not None else [],
     )
 
 
@@ -170,27 +302,30 @@ def _norm(text: str) -> str:
 
 
 def _score_money(answer: str, task: dict) -> dict:
+    expected = [float(e.replace("$", "").replace(",", "")) for e in task.get("expected", [])]
+    found_nums = [float(x) for x in re.findall(r"\$?\s*(\d+(?:\.\d+)?)", answer)]
     found, missing = [], []
-    low = _norm(answer)
-    for exp in task.get("expected", []):
-        # Accept $44.30 and 44.3 / 44.30 without the dollar sign.
-        core = exp.replace("$", "").rstrip("0").rstrip(".") if "." in exp else exp
-        if _norm(exp) in low or core in low:
-            found.append(exp)
+    for exp, raw in zip(expected, task.get("expected", [])):
+        if any(abs(n - exp) < 0.005 for n in found_nums):
+            found.append(raw)
         else:
-            missing.append(exp)
+            missing.append(raw)
     return {
         "score": len(found),
-        "max": len(task.get("expected", [])),
+        "max": len(expected),
         "passed": not missing,
         "details": [f"found: {', '.join(found) or 'none'}", f"missing: {', '.join(missing) or 'none'}"],
     }
 
 
 def _score_recall(answer: str, task: dict) -> dict:
+    """Each expected entry is a string or a list of acceptable alternatives."""
     low = _norm(answer)
-    found = [e for e in task.get("expected", []) if e in low]
-    missing = [e for e in task.get("expected", []) if e not in low]
+    found, missing = [], []
+    for entry in task.get("expected", []):
+        alts = entry if isinstance(entry, list) else [entry]
+        hit = next((a for a in alts if _norm(a) in low), None)
+        (found if hit else missing).append(hit or alts[0])
     return {
         "score": len(found),
         "max": len(task.get("expected", [])),
@@ -225,7 +360,8 @@ def _score_format25(answer: str, task: dict) -> dict:
 
 def _score_summary50(answer: str, task: dict) -> dict:
     words = answer.split()
-    missing = [e for e in task.get("expected", []) if e not in answer]
+    low = _norm(answer)
+    missing = [e for e in task.get("expected", []) if _norm(e) not in low]
     checks = [
         ("at most 50 words", len(words) <= 50, f"{len(words)} words"),
         ("all numbers/dates/names preserved", not missing, f"missing: {missing or 'none'}"),
@@ -239,27 +375,45 @@ def _score_summary50(answer: str, task: dict) -> dict:
     }
 
 
-def _score_debug(answer: str, task: dict) -> dict:
-    """Heuristic: the duplicates bug is the point. Labelled heuristic in output."""
-    low = _norm(answer)
-    checks = [
-        ("names duplicates/distinctness as the bug", bool(re.search(r"duplicat|distinct", low))),
-        ("gives a concrete failing example", bool(re.search(r"\[\s*5\s*,\s*5", low)) or "5, 5" in low),
-        ("includes corrected code", "```" in answer and ("set(" in low or "distinct" in low)),
-    ]
-    score = sum(1 for _, ok in checks if ok)
-    return {
-        "score": score,
-        "max": len(checks),
-        "passed": score == len(checks),
-        "details": [f"heuristic — {label}: {'yes' if ok else 'no'}" for label, ok in checks],
-    }
+def _extract_code(answer: str, marker: str) -> str | None:
+    blocks = re.findall(r"```(?:python|py)?\n(.*?)```", answer, re.S | re.I)
+    if blocks:
+        return blocks[-1].strip()
+    if marker in answer:
+        return answer.strip()
+    return None
 
 
-_LEAP_HARNESS = '''
+def _execute_candidate(code: str, harness: str, timeout: int = 10) -> dict:
+    """Run candidate code + harness in a subprocess. NOT a security sandbox:
+    it runs as the user with a timeout and a stripped-down env. Only enable
+    code execution for models you trust (see README disclosure)."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="kombat-") as td:
+            script = Path(td) / "candidate.py"
+            script.write_text(code + "\n" + harness, encoding="utf-8")
+            env = {"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": "0"}
+            proc = subprocess.run(
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=td,
+                env=env,
+            )
+        passed = proc.returncode == 0 and "ALL CHECKS PASSED" in proc.stdout
+        lines = (proc.stdout + proc.stderr).strip().splitlines()
+        return {"passed": passed, "details": lines[-3:] if lines else ["no output"]}
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "details": [f"timeout after {timeout}s"]}
+    except Exception as exc:
+        return {"passed": False, "details": [f"harness error: {exc}"]}
+
+
+_HARNESSES = {
+    "T6": '''
 import sys
-checks = [(2000, True), (1900, False), (2024, True), (2023, False), (2100, False)]
-for year, want in checks:
+for year, want in [(2000, True), (1900, False), (2024, True), (2023, False), (2100, False)]:
     got = is_leap_year(year)
     if got is not want:
         print(f"FAIL is_leap_year({year}) = {got!r}, want {want!r}"); sys.exit(1)
@@ -272,70 +426,91 @@ for bad, exc in [(True, TypeError), ("2024", TypeError), (0, ValueError), (-4, V
         print(f"FAIL is_leap_year({bad!r}) raised {type(other).__name__}, want {exc.__name__}"); sys.exit(1)
     print(f"FAIL is_leap_year({bad!r}) did not raise {exc.__name__}"); sys.exit(1)
 print("ALL CHECKS PASSED")
-'''
+''',
+    "T7": '''
+import sys
+valid = [[1,2,3,4,5,6,7,8,9],[4,5,6,7,8,9,1,2,3],[7,8,9,1,2,3,4,5,6],[2,3,4,5,6,7,8,9,1],[5,6,7,8,9,1,2,3,4],[8,9,1,2,3,4,5,6,7],[3,4,5,6,7,8,9,1,2],[6,7,8,9,1,2,3,4,5],[9,1,2,3,4,5,6,7,8]]
+if is_valid_sudoku(valid) is not True:
+    print("FAIL valid grid not accepted"); sys.exit(1)
+bad_row = [row[:] for row in valid]; bad_row[0][1] = 1
+if is_valid_sudoku(bad_row) is not False:
+    print("FAIL row duplicate accepted"); sys.exit(1)
+bad_box = [row[:] for row in valid]; bad_box[0][0] = 2; bad_box[0][1] = 1
+if is_valid_sudoku(bad_box) is not False:
+    print("FAIL box duplicate accepted"); sys.exit(1)
+if is_valid_sudoku(valid[:8]) is not False:
+    print("FAIL 8-row grid accepted"); sys.exit(1)
+print("ALL CHECKS PASSED")
+''',
+    "T8": '''
+import sys
+cases = [("", []), ("aaabbbba", [("a", 3), ("b", 4), ("a", 1)]), ("abc", [("a", 1), ("b", 1), ("c", 1)]), ("z", [("z", 1)])]
+for s, want in cases:
+    got = rle_encode(s)
+    if got != want:
+        print(f"FAIL rle_encode({s!r}) = {got!r}, want {want!r}"); sys.exit(1)
+print("ALL CHECKS PASSED")
+''',
+    "T2": '''
+import sys
+cases = [([5, 5, 4], 4), ([5, 5], None), ([1, 2, 3], 2), ([], None), ([7], None), ([3, 1, 2], 2)]
+for xs, want in cases:
+    got = second_largest(list(xs))
+    if got != want:
+        print(f"FAIL second_largest({xs!r}) = {got!r}, want {want!r}"); sys.exit(1)
+print("ALL CHECKS PASSED")
+''',
+}
+
+_MARKERS = {"T6": "def is_leap_year", "T7": "def is_valid_sudoku", "T8": "def rle_encode", "T2": "def second_largest"}
 
 
-def _extract_code(answer: str) -> str | None:
-    blocks = re.findall(r"```(?:python|py)?\n(.*?)```", answer, re.S | re.I)
-    if blocks:
-        return blocks[-1].strip()
-    if "def is_leap_year" in answer:
-        return answer.strip()
-    return None
-
-
-def _score_code_exec(answer: str, task: dict, allow_exec: bool) -> dict:
+def _score_code(answer: str, task_id: str, allow_exec: bool) -> dict:
     if not allow_exec:
         return {
-            "score": 0,
-            "max": 1,
-            "passed": False,
-            "skipped": True,
-            "details": ["code execution disabled (allow_code_execution=false) — scored as skipped"],
+            "score": 0, "max": 1, "passed": False, "skipped": True,
+            "details": ["code execution disabled (allow_code_execution=false) — round excluded from points"],
         }
-    code = _extract_code(answer)
-    if not code:
-        return {"score": 0, "max": 1, "passed": False, "details": ["no python code block found"]}
-    if "is_leap_year" not in code:
-        return {"score": 0, "max": 1, "passed": False, "details": ["no is_leap_year definition in code"]}
-    try:
-        with tempfile.TemporaryDirectory(prefix="kombat-") as td:
-            script = Path(td) / "candidate.py"
-            script.write_text(code + "\n" + _LEAP_HARNESS, encoding="utf-8")
-            proc = subprocess.run(
-                [sys.executable, str(script)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        passed = proc.returncode == 0 and "ALL CHECKS PASSED" in proc.stdout
-        detail = (proc.stdout + proc.stderr).strip().splitlines()
-        return {
-            "score": 1 if passed else 0,
-            "max": 1,
-            "passed": passed,
-            "details": detail[-3:] if detail else ["no output"],
-        }
-    except subprocess.TimeoutExpired:
-        return {"score": 0, "max": 1, "passed": False, "details": ["timeout after 10s"]}
-    except Exception as exc:
-        return {"score": 0, "max": 1, "passed": False, "details": [f"harness error: {exc}"]}
+    code = _extract_code(answer, _MARKERS.get(task_id, "def "))
+    if not code or _MARKERS.get(task_id, "") not in code:
+        return {"score": 0, "max": 1, "passed": False, "details": ["no usable code block / function definition found"]}
+    result = _execute_candidate(code, _HARNESSES[task_id])
+    return {
+        "score": 1 if result["passed"] else 0,
+        "max": 1,
+        "passed": result["passed"],
+        "details": result["details"],
+    }
 
 
-_SCORERS = {
-    "money": _score_money,
-    "recall": _score_recall,
-    "format25": _score_format25,
-    "summary50": _score_summary50,
-    "debug": _score_debug,
-}
+def _score_debug_fallback(answer: str) -> dict:
+    low = _norm(answer)
+    checks = [
+        ("names duplicates/distinctness as the bug", bool(re.search(r"duplicat|distinct", low))),
+        ("gives a concrete failing example", bool(re.search(r"\[\s*5\s*,\s*5", low)) or "5, 5" in low),
+        ("includes corrected code", "```" in answer and ("set(" in low or "distinct" in low)),
+    ]
+    score = sum(1 for _, ok in checks if ok)
+    return {
+        "score": score,
+        "max": len(checks),
+        "passed": score == len(checks),
+        "details": [f"heuristic fallback (no executable code) — {label}: {'yes' if ok else 'no'}" for label, ok in checks],
+    }
 
 
 def _score_one(scorer_name: str, answer: str, task: dict, allow_exec: bool) -> dict:
     try:
         if scorer_name == "code_exec":
-            return _score_code_exec(answer, task, allow_exec)
-        fn = _SCORERS.get(scorer_name)
+            return _score_code(answer, task["id"], allow_exec)
+        if scorer_name == "debug_exec":
+            code = _extract_code(answer, "def second_largest")
+            if code and "def second_largest" in code and allow_exec:
+                return _score_code(answer, task["id"], True)
+            # No code, or execution disabled: fall back to the labelled heuristic.
+            return _score_debug_fallback(answer)
+        fn = {"money": _score_money, "recall": _score_recall,
+              "format25": _score_format25, "summary50": _score_summary50}.get(scorer_name)
         if fn is None:
             return {"score": 0, "max": 0, "passed": False, "details": [f"unknown scorer {scorer_name!r}"]}
         return fn(answer, task)
@@ -343,59 +518,76 @@ def _score_one(scorer_name: str, answer: str, task: dict, allow_exec: bool) -> d
         return {"score": 0, "max": 0, "passed": False, "details": [f"scorer error: {exc}"]}
 
 
-# ---------------------------------------------------------------- report
+def _fraction(score: dict):
+    if score.get("skipped") or score.get("errored") or not score.get("max"):
+        return None
+    return score["score"] / score["max"]
 
-def _render_report(fighter_a: str, fighter_b: str, rounds: list[dict]) -> str:
-    def esc(x) -> str:
-        return html.escape(str(x))
 
-    rows = []
-    for r in rounds:
-        sa, sb = r["a"], r["b"]
-        if sa["score"] > sb["score"]:
-            verdict, cls = f"{esc(fighter_a)} takes the round", "a"
-        elif sb["score"] > sa["score"]:
-            verdict, cls = f"{esc(fighter_b)} takes the round", "b"
-        else:
-            verdict, cls = "Round is a draw", "draw"
-        ko = ""
-        ka, kb = sa.get("passed"), sb.get("passed")
-        if ka and not kb:
-            ko = f" — K.O.: {esc(fighter_a)} passed, {esc(fighter_b)} failed"
-        elif kb and not ka:
-            ko = f" — K.O.: {esc(fighter_b)} passed, {esc(fighter_a)} failed"
-        rows.append(
-            f'<tr class="{cls}"><td><b>{esc(r["id"])}</b><br><small>{esc(r["title"])}</small></td>'
-            f'<td>{sa["score"]}/{sa["max"]}<br><small>{esc("; ".join(sa["details"]))}</small></td>'
-            f'<td>{sb["score"]}/{sb["max"]}<br><small>{esc("; ".join(sb["details"]))}</small></td>'
-            f'<td>{verdict}{ko}</td></tr>'
+# ---------------------------------------------------------------- scoring
+
+def _render_report(fighter_a: str, fighter_b: str, rounds_out: list[dict], usage: dict, winner: str, ko: bool) -> str:
+    esc = html.escape
+    sections = []
+    for rnd in rounds_out:
+        rows = []
+        for r in rnd["tasks"]:
+            sa, sb = r["a"], r["b"]
+            if r.get("excluded"):
+                verdict = f"excluded ({r['excluded']})"
+            elif sa["score"] / max(sa["max"], 1) > sb["score"] / max(sb["max"], 1):
+                verdict = f"{esc(fighter_a)} takes the task"
+            elif sb["score"] / max(sb["max"], 1) > sa["score"] / max(sa["max"], 1):
+                verdict = f"{esc(fighter_b)} takes the task"
+            else:
+                verdict = "Task is a draw"
+            ko_note = " — <b>K.O.</b>" if r.get("ko") else ""
+            rows.append(
+                f'<tr><td><b>{esc(r["id"])}</b><br><small>{esc(r["title"])}</small></td>'
+                f'<td>{sa["score"]}/{sa["max"]}<br><small>{esc("; ".join(sa["details"]))}</small></td>'
+                f'<td>{sb["score"]}/{sb["max"]}<br><small>{esc("; ".join(sb["details"]))}</small></td>'
+                f'<td>{verdict}{ko_note}</td></tr>'
+            )
+        sections.append(
+            f'<h2>{esc(rnd["id"])} — {esc(rnd["name"])} ({rnd["points"]} pt/task)</h2>'
+            f'<table><tr><th>Task</th><th>{esc(fighter_a)}</th><th>{esc(fighter_b)}</th><th>Verdict</th></tr>'
+            + "".join(rows) + "</table>"
         )
-    body = "\n".join(rows)
-    pa = sum(r["points_a"] for r in rounds)
-    pb = sum(r["points_b"] for r in rounds)
-    if pa > pb:
-        winner = f"{esc(fighter_a)} wins the fight"
-    elif pb > pa:
-        winner = f"{esc(fighter_b)} wins the fight"
-    else:
-        winner = "The fight is a draw"
+    usage_rows = ""
+    for fighter, u in (usage or {}).items():
+        usage_rows += (
+            f"<tr><td>{esc(fighter)}</td><td>{u.get('latency_s', 0):.1f}s</td>"
+            f"<td>{u.get('tokens', 0)}</td><td>${u.get('cost_usd', 0.0):.4f}</td></tr>"
+        )
+    winner_line = f"{esc(winner)} wins by K.O." if ko else f"{esc(winner)} wins the fight"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Model Kombat — {esc(fighter_a)} vs {esc(fighter_b)}</title>
 <style>
-body{{font-family:system-ui,sans-serif;background:#0d0d12;color:#eee;max-width:960px;margin:2rem auto;padding:0 1rem}}
-h1{{letter-spacing:.05em}} .versus{{display:flex;gap:1rem;align-items:center;justify-content:center;font-size:1.4rem;font-weight:700}}
+body{{font-family:system-ui,sans-serif;background:#0d0d12;color:#eee;max-width:980px;margin:2rem auto;padding:0 1rem}}
+h1{{letter-spacing:.05em}} .versus{{display:flex;gap:1rem;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700}}
 .card{{background:#1a1a24;border:1px solid #333;border-radius:10px;padding:1rem;flex:1;text-align:center;word-break:break-word}}
-table{{width:100%;border-collapse:collapse;margin-top:1rem}} td,th{{border:1px solid #333;padding:.5rem;vertical-align:top}}
-tr.a td:first-child{{border-left:4px solid #4da3ff}} tr.b td:first-child{{border-left:4px solid #ff5a5a}}
-small{{color:#aaa}} .winner{{text-align:center;font-size:1.2rem;margin-top:1rem}}</style></head>
+table{{width:100%;border-collapse:collapse;margin:.5rem 0 1.5rem}} td,th{{border:1px solid #333;padding:.5rem;vertical-align:top}}
+small{{color:#aaa}} .winner{{text-align:center;font-size:1.2rem;margin:1rem 0}}</style></head>
 <body>
 <h1>🥊 MODEL KOMBAT</h1>
 <div class="versus"><div class="card">{esc(fighter_a)}</div><div>VS</div><div class="card">{esc(fighter_b)}</div></div>
-<p class="winner">{winner} — {pa} : {pb} (points)</p>
-<table><tr><th>Round</th><th>{esc(fighter_a)}</th><th>{esc(fighter_b)}</th><th>Verdict</th></tr>{body}</table>
-<p><small>Scored mechanically by Model Kombat. Code rounds only execute with allow_code_execution=true.</small></p>
+<p class="winner">{winner_line}</p>
+{''.join(sections)}
+<h2>Usage</h2>
+<table><tr><th>Fighter</th><th>Latency</th><th>Tokens</th><th>Est. cost</th></tr>{usage_rows}</table>
+<p><small>Scored mechanically by Model Kombat. Code rounds execute only with allow_code_execution=true (subprocess, timeout, not a security sandbox). Errored/skipped rounds are excluded from points.</small></p>
 </body></html>
 """
+
+
+def _append_history(record: dict) -> None:
+    try:
+        path = _data_dir() / "fights.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
 
 
 def kombat_score_answers(args: dict, **kwargs) -> str:
@@ -405,49 +597,95 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
     answers_b = args.get("answers_b") or {}
     if not isinstance(answers_a, dict) or not isinstance(answers_b, dict):
         return _err("answers_a and answers_b must be objects mapping task ID -> answer text.")
-    allow_exec = bool(args.get("allow_code_execution", False))
+    allow_exec = args.get("allow_code_execution")
+    if allow_exec is None:
+        allow_exec = bool(_cfg("allow_code_execution", False))
     render = args.get("render_report", True)
+    usage = args.get("usage") or {}
+    errors_a = set(args.get("errors_a") or [])
+    errors_b = set(args.get("errors_b") or [])
 
     try:
-        tasks = _load_tasks()
+        suite = _load_suite()
     except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
 
-    rounds = []
-    points_a = points_b = 0.0
-    for task in tasks:
-        tid = task["id"]
-        if tid not in answers_a and tid not in answers_b:
-            continue
+    rounds_out = []
+    points = {fighter_a: 0.0, fighter_b: 0.0}
+    ko_rounds = []
+
+    def score_task(tid, weight):
+        task = suite["tasks"][tid]
         sa = _score_one(task["scorer"], str(answers_a.get(tid, "")), task, allow_exec)
         sb = _score_one(task["scorer"], str(answers_b.get(tid, "")), task, allow_exec)
-        if sa["score"] > sb["score"]:
-            points_a += 1.0
-        elif sb["score"] > sa["score"]:
-            points_b += 1.0
-        else:
-            points_a += 0.5
-            points_b += 0.5
-        rounds.append(
-            {
-                "id": tid,
-                "title": task["title"],
-                "a": sa,
-                "b": sb,
-                "points_a": 1.0 if sa["score"] > sb["score"] else (0.5 if sa["score"] == sb["score"] else 0.0),
-                "points_b": 1.0 if sb["score"] > sa["score"] else (0.5 if sa["score"] == sb["score"] else 0.0),
-            }
+        excluded = None
+        if tid in errors_a or tid in errors_b:
+            excluded = "errored"
+            if tid in errors_a:
+                sa = {**sa, "errored": True}
+            if tid in errors_b:
+                sb = {**sb, "errored": True}
+        elif sa.get("skipped") or sb.get("skipped"):
+            excluded = "skipped (code execution off)"
+        ko = bool(
+            task["scorer"] in ("code_exec", "debug_exec")
+            and not excluded
+            and sa.get("passed") != sb.get("passed")
         )
+        fa, fb = _fraction(sa), _fraction(sb)
+        pa = pb = 0.0
+        if not excluded and fa is not None and fb is not None:
+            if fa > fb:
+                pa = float(weight)
+            elif fb > fa:
+                pb = float(weight)
+            else:
+                pa = pb = weight / 2
+        points[fighter_a] += pa
+        points[fighter_b] += pb
+        return {
+            "id": tid, "title": task["title"], "scorer": task["scorer"],
+            "a": sa, "b": sb, "points_a": pa, "points_b": pb,
+            "ko": ko, "excluded": excluded,
+        }
 
-    if not rounds:
-        return _err("No overlapping task IDs in answers_a/answers_b. Call kombat_list_tasks for valid IDs.")
+    for rnd in suite["rounds"]:
+        tasks_out = [score_task(tid, rnd["points"]) for tid in rnd["tasks"]
+                     if tid in answers_a or tid in answers_b]
+        if tasks_out:
+            rounds_out.append({**rnd, "tasks": tasks_out})
+        ko_rounds.extend(t["id"] for t in tasks_out if t.get("ko"))
 
-    if points_a > points_b:
+    # Sudden death on a tie (only if the SD task was actually fought).
+    sd_winner = None
+    sd_id = suite["sudden_death_task"]
+    if sd_id and (sd_id in answers_a or sd_id in answers_b) and points[fighter_a] == points[fighter_b]:
+        sd = score_task(sd_id, 0)  # winner-takes-fight, no points
+        rounds_out.append({"id": "SD", "name": "Sudden Death", "points": 0, "tasks": [sd]})
+        fa, fb = _fraction(sd["a"]), _fraction(sd["b"])
+        if fa is not None and fb is not None and fa != fb:
+            sd_winner = fighter_a if fa > fb else fighter_b
+
+    if sd_winner:
+        winner = sd_winner
+    elif points[fighter_a] > points[fighter_b]:
         winner = fighter_a
-    elif points_b > points_a:
+    elif points[fighter_b] > points[fighter_a]:
         winner = fighter_b
     else:
         winner = "draw"
+
+    # Championship K.O.: pass every R3 task while opponent fails one.
+    ko = False
+    r3 = next((r for r in rounds_out if r["id"] == "R3"), None)
+    if r3 and winner != "draw":
+        def r3_passes(key):
+            vals = [t[key].get("passed") for t in r3["tasks"] if not t.get("excluded")]
+            return bool(vals) and all(vals)
+        if r3_passes("a") and not r3_passes("b"):
+            winner, ko = fighter_a, True
+        elif r3_passes("b") and not r3_passes("a"):
+            winner, ko = fighter_b, True
 
     report_path = None
     if render:
@@ -456,15 +694,170 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
             report_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             report_path = report_dir / f"kombat-{stamp}.html"
-            report_path.write_text(_render_report(fighter_a, fighter_b, rounds), encoding="utf-8")
+            report_path.write_text(
+                _render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko),
+                encoding="utf-8",
+            )
             report_path = str(report_path)
         except Exception as exc:
             report_path = f"report render failed: {exc}"
 
+    record = {
+        "ts": _now_iso(),
+        "fighter_a": fighter_a,
+        "fighter_b": fighter_b,
+        "winner": winner,
+        "ko": ko,
+        "points": points,
+        "usage": usage,
+        "report": report_path,
+        "answers_a": answers_a,
+        "answers_b": answers_b,
+        "rounds": [
+            {
+                "id": r["id"], "name": r["name"], "points": r["points"],
+                "tasks": [
+                    {"id": t["id"], "a": t["a"]["score"], "a_max": t["a"]["max"],
+                     "b": t["b"]["score"], "b_max": t["b"]["max"],
+                     "points_a": t["points_a"], "points_b": t["points_b"],
+                     "ko": t["ko"], "excluded": t["excluded"]}
+                    for t in r["tasks"]
+                ],
+            }
+            for r in rounds_out
+        ],
+    }
+    _append_history(record)
+
+    # Kanban scoreboard completion (best-effort, display only).
+    kanban_note = None
+    try:
+        last = None
+        if hasattr(_CTX, "state"):
+            last = _CTX.state.get("last_fight", default=None)
+        if last and last.get("kanban") and bool(_cfg("show_on_kanban", True)):
+            from . import kanban as _kb
+
+            kanban_note = _kb.finish_rounds(last["kanban"], rounds_out, fighter_a, fighter_b, winner, report_path)
+    except Exception as exc:
+        kanban_note = f"kanban update skipped: {exc}"
+
     return _ok(
         fighters=[fighter_a, fighter_b],
         winner=winner,
-        points={fighter_a: points_a, fighter_b: points_b},
-        rounds=rounds,
+        ko=ko,
+        sudden_death_winner=sd_winner,
+        ko_rounds=ko_rounds,
+        points=points,
+        rounds=rounds_out,
+        usage=usage,
         report=report_path,
+        kanban=kanban_note,
     )
+
+
+# ---------------------------------------------------------------- history/export
+
+def kombat_history(args: dict, **kwargs) -> str:
+    try:
+        limit = int(args.get("limit", 10))
+    except (TypeError, ValueError):
+        return _err("limit must be an integer.")
+    path = _data_dir() / "fights.jsonl"
+    if not path.exists():
+        return _ok(count=0, fights=[])
+    fights = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            fights.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    recent = fights[-limit:] if limit > 0 else fights
+    return _ok(
+        count=len(recent),
+        fights=[
+            {
+                "ts": f.get("ts"),
+                "fighter_a": f.get("fighter_a"),
+                "fighter_b": f.get("fighter_b"),
+                "winner": f.get("winner"),
+                "ko": f.get("ko"),
+                "points": f.get("points"),
+                "report": f.get("report"),
+            }
+            for f in recent
+        ],
+    )
+
+
+def kombat_export(args: dict, **kwargs) -> str:
+    fmt = str(args.get("format") or "json").lower()
+    if fmt not in ("json", "md", "csv"):
+        return _err("format must be one of: json, md, csv.")
+    path = _data_dir() / "fights.jsonl"
+    if not path.exists():
+        return _err("No fight history yet in this profile.")
+    fights = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            fights.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    idx = args.get("index")
+    if idx is not None:
+        try:
+            fights = [fights[int(idx)]]
+        except (ValueError, IndexError):
+            return _err(f"index {idx!r} out of range (0..{len(fights) - 1}).")
+    elif len(fights) != 1:
+        return _err(
+            f"History holds {len(fights)} fights; pass index (0..{len(fights) - 1}) to export one, "
+            "or call kombat_history to see them."
+        )
+    fight = fights[0]
+    export_dir = _data_dir() / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_path = export_dir / f"fight-{stamp}.{fmt}"
+    try:
+        if fmt == "json":
+            out_path.write_text(json.dumps(fight, indent=2), encoding="utf-8")
+        elif fmt == "md":
+            lines = [
+                f"# Model Kombat — {fight.get('fighter_a')} vs {fight.get('fighter_b')}",
+                "",
+                f"- When: {fight.get('ts')}",
+                f"- Winner: {fight.get('winner')}{' (K.O.)' if fight.get('ko') else ''}",
+                f"- Points: {json.dumps(fight.get('points'))}",
+                f"- Report: {fight.get('report')}",
+                "",
+            ]
+            for rnd in fight.get("rounds", []):
+                lines.append(f"## {rnd['id']} — {rnd['name']} ({rnd['points']} pt/task)")
+                for t in rnd["tasks"]:
+                    lines.append(
+                        f"- {t['id']}: A {t['a']}/{t['a_max']} ({t['points_a']} pts) vs "
+                        f"B {t['b']}/{t['b_max']} ({t['points_b']} pts)"
+                        + (" — K.O." if t.get("ko") else "")
+                        + (f" — excluded: {t['excluded']}" if t.get("excluded") else "")
+                    )
+                lines.append("")
+            out_path.write_text("\n".join(lines), encoding="utf-8")
+        else:  # csv
+            rows = ["round,task,fighter_a,score_a,max_a,points_a,fighter_b,score_b,max_b,points_b,ko,excluded"]
+            for rnd in fight.get("rounds", []):
+                for t in rnd["tasks"]:
+                    rows.append(
+                        ",".join(
+                            str(x).replace(",", ";")
+                            for x in (
+                                rnd["id"], t["id"], fight.get("fighter_a"), t["a"], t["a_max"], t["points_a"],
+                                fight.get("fighter_b"), t["b"], t["b_max"], t["points_b"],
+                                t.get("ko", False), t.get("excluded") or "",
+                            )
+                        )
+                    )
+            out_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    except Exception as exc:
+        return _err(f"Export failed: {exc}")
+    return _ok(format=fmt, path=str(out_path))

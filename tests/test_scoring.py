@@ -1,10 +1,11 @@
-"""Tests for Model Kombat solvers/tools (no Hermes host needed).
+"""Tests for Model Kombat scorers/tools (no Hermes host needed, except mock-ccx).
 
 Run: python -m pytest tests/ -q   (or: python tests/test_scoring.py)
 """
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -33,21 +34,69 @@ def is_leap_year(year: int) -> bool:
     return year % 400 == 0 or (year % 4 == 0 and year % 100 != 0)
 ```'''
 BAD_T6 = "```python\ndef is_leap_year(year):\n    return year % 4 == 0\n```"
+GOOD_T7 = '''```python
+def is_valid_sudoku(grid):
+    """Return True iff grid is a valid completed Sudoku."""
+    if not isinstance(grid, list) or len(grid) != 9:
+        return False
+    if any(not isinstance(r, list) or len(r) != 9 for r in grid):
+        return False
+    want = set(range(1, 10))
+    if any(set(r) != want for r in grid):
+        return False
+    if any({grid[r][c] for r in range(9)} != want for c in range(9)):
+        return False
+    for br in (0, 3, 6):
+        for bc in (0, 3, 6):
+            if {grid[r][c] for r in range(br, br + 3) for c in range(bc, bc + 3)} != want:
+                return False
+    return True
+```'''
+GOOD_T2 = '''```python
+def second_largest(xs):
+    """Second-largest distinct value, or None."""
+    distinct = sorted(set(xs), reverse=True)
+    return distinct[1] if len(distinct) >= 2 else None
+```'''
+GOOD_T8 = '''```python
+def rle_encode(s):
+    """Run-length encode s as (char, count) tuples."""
+    out = []
+    for ch in s:
+        if out and out[-1][0] == ch:
+            out[-1] = (ch, out[-1][1] + 1)
+        else:
+            out.append((ch, 1))
+    return out
+```'''
 
 TASKS = {t["id"]: t for t in tools._load_tasks()}
 
 
 def test_list_tasks():
     out = json.loads(tools.kombat_list_tasks({}))
-    assert out["ok"] and out["count"] == 6
-    assert [t["id"] for t in out["tasks"]] == ["T1", "T2", "T3", "T4", "T5", "T6"]
+    assert out["ok"]
+    assert [r["id"] for r in out["rounds"]] == ["R1", "R2", "R3"]
+    assert [r["points_per_task"] for r in out["rounds"]] == [1, 2, 3]
+    assert out["sudden_death_task"] == "T8"
+    assert [t["id"] for t in out["tasks"]] == ["T1", "T4", "T3", "T5", "T2", "T6", "T7", "T8"]
 
 
 def test_money_scorer():
     good = tools._score_one("money", "a) $44.30, b) $5.70, c) $12.20", TASKS["T1"], False)
     assert good["passed"] and good["score"] == 3
+    # numeric tolerance: 44.3 without $ still counts
+    plain = tools._score_one("money", "total 44.3, change 5.7, refund 12.2", TASKS["T1"], False)
+    assert plain["passed"], plain["details"]
     bad = tools._score_one("money", "total $44.30", TASKS["T1"], False)
     assert not bad["passed"] and bad["score"] == 1
+
+
+def test_recall_synonyms():
+    # "no one was injured" must count for the injuries fact (the T3 false-negative fix).
+    ans = "Serviced on Sol 43 by Tomas Beck. Tank R-7 contained nitrogen. No one was injured."
+    out = tools._score_one("recall", ans, TASKS["T3"], False)
+    assert out["passed"], out["details"]
 
 
 def test_format25_scorer():
@@ -73,25 +122,146 @@ def test_code_exec_passes_and_fails():
     assert skipped.get("skipped") is True
 
 
-def test_score_answers_end_to_end(tmp_path=None):
-    # Fighter A: perfect on T4/T5/T6; Fighter B: sloppy. A must win + K.O. on T6.
-    out = json.loads(
-        tools.kombat_score_answers(
-            {
-                "fighter_a": "crouton-alpha",
-                "fighter_b": "sloppy-model",
-                "answers_a": {"T4": CROUTON_T4, "T5": CROUTON_T5, "T6": CROUTON_T6},
-                "answers_b": {"T4": "Stay amazing!", "T5": "A project was approved.", "T6": BAD_T6},
-                "allow_code_execution": True,
-                "render_report": False,
-            }
-        )
-    )
+def test_debug_exec_and_sudoku_and_rle():
+    t2 = tools._score_one("debug_exec", GOOD_T2, TASKS["T2"], True)
+    assert t2["passed"], t2["details"]
+    t7 = tools._score_one("code_exec", GOOD_T7, TASKS["T7"], True)
+    assert t7["passed"], t7["details"]
+    t8 = tools._score_one("code_exec", GOOD_T8, TASKS["T8"], True)
+    assert t8["passed"], t8["details"]
+    # no code -> heuristic fallback still credits a good explanation+fix
+    prose = ("It fails on duplicates: [5, 5, 4] returns 5 instead of 4. "
+             "Fix with distinct values:\n```python\ndef second_largest(xs):\n"
+             "    d = sorted(set(xs), reverse=True)\n    return d[1] if len(d) >= 2 else None\n```")
+    fb = tools._score_one("debug_exec", prose, TASKS["T2"], False)
+    assert fb["passed"], fb["details"]
+
+
+def test_weighted_scoring_and_ko():
+    with tempfile.TemporaryDirectory() as td:
+        tools.set_data_dir_override(Path(td))
+        try:
+            out = json.loads(
+                tools.kombat_score_answers(
+                    {
+                        "fighter_a": "crouton-alpha",
+                        "fighter_b": "sloppy-model",
+                        "answers_a": {"T4": CROUTON_T4, "T5": CROUTON_T5, "T6": CROUTON_T6, "T7": GOOD_T7},
+                        "answers_b": {"T4": "Stay amazing!", "T5": "A project was approved.", "T6": BAD_T6, "T7": BAD_T6},
+                        "allow_code_execution": True,
+                        "render_report": False,
+                    }
+                )
+            )
+        finally:
+            tools.set_data_dir_override(None)
     assert out["ok"], out
     assert out["winner"] == "crouton-alpha", out["points"]
-    assert out["points"]["crouton-alpha"] > out["points"]["sloppy-model"]
-    t6 = next(r for r in out["rounds"] if r["id"] == "T6")
-    assert t6["a"]["passed"] and not t6["b"]["passed"]
+    # T4 (R1=1pt) + T5 (R2=2pts) + T6/T7 (R3=3pts each) all to A
+    assert out["points"] == {"crouton-alpha": 9.0, "sloppy-model": 0.0}, out["points"]
+    assert out["ko"] is True  # passed every Championship task, opponent failed them
+
+
+def test_errored_and_skipped_excluded():
+    with tempfile.TemporaryDirectory() as td:
+        tools.set_data_dir_override(Path(td))
+        try:
+            out = json.loads(
+                tools.kombat_score_answers(
+                    {
+                        "fighter_a": "a",
+                        "fighter_b": "b",
+                        "answers_a": {"T1": "a) $44.30, b) $5.70, c) $12.20", "T6": CROUTON_T6},
+                        "answers_b": {"T1": "wrong", "T6": BAD_T6},
+                        "errors_a": ["T6"],
+                        "allow_code_execution": True,
+                        "render_report": False,
+                    }
+                )
+            )
+        finally:
+            tools.set_data_dir_override(None)
+    assert out["ok"], out
+    # T6 excluded (A errored) -> only T1 counts: A wins 1pt, B 0. No KO.
+    assert out["points"] == {"a": 1.0, "b": 0.0}, out["points"]
+    assert out["ko"] is False
+
+
+def test_history_and_export():
+    with tempfile.TemporaryDirectory() as td:
+        tools.set_data_dir_override(Path(td))
+        try:
+            tools.kombat_score_answers(
+                {
+                    "fighter_a": "a", "fighter_b": "b",
+                    "answers_a": {"T1": "a) $44.30, b) $5.70, c) $12.20"},
+                    "answers_b": {"T1": "wrong"},
+                    "render_report": False,
+                }
+            )
+            hist = json.loads(tools.kombat_history({"limit": 10}))
+            assert hist["ok"] and hist["count"] == 1 and hist["fights"][0]["winner"] == "a"
+            for fmt in ("json", "md", "csv"):
+                exp = json.loads(tools.kombat_export({"format": fmt, "index": 0}))
+                assert exp["ok"] and Path(exp["path"]).exists(), exp
+        finally:
+            tools.set_data_dir_override(None)
+
+
+class _FakeUsage:
+    input_tokens = 10
+    output_tokens = 20
+    total_tokens = 30
+    cost_usd = 0.001
+
+
+class _FakeResult:
+    def __init__(self, text):
+        self.text = text
+        self.usage = _FakeUsage()
+
+
+class _FakeLlm:
+    def complete(self, messages, **kwargs):
+        return _FakeResult("a) $44.30, b) $5.70, c) $12.20")
+
+
+class _FakeState:
+    def __init__(self):
+        self.store = {}
+
+    def set(self, key, value):
+        self.store[key] = value
+
+    def get(self, key, default=None):
+        return self.store.get(key, default)
+
+
+class _FakeCtx:
+    llm = _FakeLlm()
+
+    def __init__(self):
+        self.state = _FakeState()
+
+    def get_config(self, key, default=None):
+        return default
+
+
+def test_run_fight_with_mock_host():
+    tools.set_ctx(_FakeCtx())
+    try:
+        out = json.loads(
+            tools.kombat_run_fight(
+                {"fighter_a": "fake/a", "fighter_b": "fake/b", "tasks": ["T1"], "budget_usd": 5.0}
+            )
+        )
+    finally:
+        tools.set_ctx(None)
+    assert out["ok"], out
+    assert out["answers_a"]["T1"].startswith("a) $44.30")
+    assert out["usage"]["fake/a"]["tokens"] == 30
+    assert out["usage"]["fake/a"]["cost_usd"] == 0.001
+    assert out["meta_a"]["T1"]["attempts"] == 1
 
 
 def test_run_fight_without_host_ctx():
@@ -104,9 +274,14 @@ def test_run_fight_without_host_ctx():
 if __name__ == "__main__":
     test_list_tasks()
     test_money_scorer()
+    test_recall_synonyms()
     test_format25_scorer()
     test_summary50_scorer()
     test_code_exec_passes_and_fails()
-    test_score_answers_end_to_end()
+    test_debug_exec_and_sudoku_and_rle()
+    test_weighted_scoring_and_ko()
+    test_errored_and_skipped_excluded()
+    test_history_and_export()
+    test_run_fight_with_mock_host()
     test_run_fight_without_host_ctx()
     print("all Model Kombat tests passed")
