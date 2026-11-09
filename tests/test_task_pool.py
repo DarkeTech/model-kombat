@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple, Union
 def load_tasks() -> List[Dict]:
     tasks = []
     # load legacy tasks
-    with open('/home/themightyvh/src/model-kombat/tasks.json', 'r') as f:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tasks.json'), 'r') as f:
         data = json.load(f)
         for t in data['tasks']:
             # ensure lane and difficulty exist (they were added)
@@ -12,7 +12,7 @@ def load_tasks() -> List[Dict]:
     # load lane files
     lanes = ['coding', 'debugging', 'extraction', 'summarization', 'reasoning', 'instruction', 'recall', 'sql']
     for lane in lanes:
-        path = f'/home/themightyvh/src/model-kombat/tasks/{lane}.json'
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tasks', f'{lane}.json')
         if os.path.exists(path):
             with open(path, 'r') as f:
                 lane_data = json.load(f)
