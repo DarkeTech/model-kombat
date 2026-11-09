@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Model Kombat — Crouton vs DS-Flash</title><style>
+:root{color-scheme:dark;--cyan:#00e5ff;--magenta:#ff2ea6;--ink:#e8fbff}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:#07070f;color:var(--ink);
+  font-family:"Courier New",ui-monospace,Menlo,Consolas,monospace;
+  line-height:1.35;-webkit-text-size-adjust:100%}
+.stage{position:relative;max-width:1120px;margin:0 auto;padding:4px 10px 4px}
+.crt{pointer-events:none;position:fixed;inset:0;z-index:50;
+  background:repeating-linear-gradient(to bottom,
+    rgba(0,229,255,.03) 0 1px,rgba(0,0,0,0) 1px 3px)}
+.frame{position:relative;border:3px solid var(--cyan);border-radius:4px;background:#0b0b1a;
+  box-shadow:0 0 0 2px #050508,0 0 22px rgba(0,229,255,.28),inset 0 0 40px rgba(255,46,166,.08);
+  padding:8px 12px;clip-path:polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%)}
+h1{margin:0 0 2px;font-size:1.55rem;letter-spacing:.16em;text-align:center;
+  color:var(--cyan);text-shadow:2px 2px 0 var(--magenta),4px 4px 0 rgba(0,0,0,.55)}
+.tagline{text-align:center;margin:0 0 8px;color:var(--magenta);letter-spacing:.28em;
+  text-transform:uppercase;font-size:.65rem}
+.hp-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:start;margin:2px 0}
+.fighter{min-width:0}
+.fighter-name{font-weight:700;font-size:.88rem;color:#fff;word-break:break-word}
+.fighter-id{color:var(--cyan);font-size:.66rem;word-break:break-word}
+.hp-track{height:13px;border:2px solid var(--cyan);border-radius:2px;background:#12060f;
+  box-shadow:inset 0 0 0 2px #000;margin-top:3px;overflow:hidden;transform:skewX(-12deg)}
+.hp-fill{height:100%;background:linear-gradient(to bottom,var(--cyan),#0088aa);
+  box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
+.hp-fill.low{background:linear-gradient(to bottom,var(--magenta),#a1116b)}
+.hp-num{font-size:.65rem;color:#cfd2e8;margin-top:2px}
+.vs{align-self:center;font-size:1.25rem;font-weight:700;color:var(--magenta);
+  text-shadow:2px 2px 0 #000;transform:rotate(-3deg)}
+.banner{text-align:center;border:2px dashed var(--magenta);color:var(--magenta);
+  padding:3px 8px;margin:5px 0 2px;letter-spacing:.18em;font-weight:700;
+  text-transform:uppercase;font-size:.82rem;background:rgba(255,46,166,.07);
+  transform:skewX(-4deg)}
+.banner.error{border-color:#ff8a7a;color:#ff8a7a;background:rgba(255,82,64,.08)}
+.banner.standby{border-color:var(--cyan);color:var(--cyan);background:rgba(0,229,255,.06)}
+.stars{text-align:center;color:var(--cyan);font-size:.9rem;letter-spacing:.35em;margin:1px 0 4px}
+.meta{text-align:center;color:#cfd2e8;font-size:.72rem;margin:0 0 4px;word-break:break-word}
+.meta b{color:#fff}
+h2{font-size:.8rem;margin:5px 0 2px;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse;margin:1px 0 5px;font-size:.78rem}
+th,td{border:1px solid #2a4a66;padding:3px 6px;vertical-align:top;text-align:left}
+th{background:#12122a;color:var(--cyan);letter-spacing:.06em}
+td small{display:block;color:#b9bcce;font-size:.68rem;margin-top:1px;word-break:break-word}
+.hit{animation:hitflash .5s steps(2) 2}
+@keyframes hitflash{0%{box-shadow:inset 0 0 0 2px #ffffff}50%{box-shadow:inset 0 0 0 2px transparent}}
+td.won{background:rgba(0,229,255,.10)}
+td.won::before{content:"HIT! ";color:var(--cyan);font-weight:700}
+td.result-draw{color:var(--cyan);font-weight:700;text-transform:uppercase}
+td.result-error{color:#ff8a7a;font-weight:700}
+td.result-skipped{color:#9db4ff;font-weight:700}
+.state{display:inline-block;border:1px solid currentColor;padding:0 4px;
+  font-size:.60rem;letter-spacing:.08em;text-transform:uppercase}
+.state.done{color:#7dff8a}.state.fighting{color:var(--cyan)}
+.state.error{color:#ff8a7a}.state.waiting,.state.skipped{color:#9a9cb2}
+.ko-wrap{position:relative;text-align:center;margin:4px 0}
+.ko{position:relative;display:inline-block;padding:3px 22px;font-size:1.9rem;font-weight:800;
+  letter-spacing:.14em;color:#fff;border:4px double var(--magenta);border-radius:2px;
+  background:rgba(255,46,166,.18);transform:rotate(-5deg);
+  box-shadow:0 0 18px rgba(255,46,166,.5),inset 0 0 12px rgba(0,229,255,.25);animation:kopop .45s steps(3) both}
+@keyframes kopop{from{transform:rotate(-5deg) scale(2.4);opacity:0}
+  to{transform:rotate(-5deg) scale(1);opacity:1}}
+.winner-card{border:3px solid var(--cyan);background:#08121a;border-radius:4px;
+  padding:5px;text-align:center;margin:5px 0;clip-path:polygon(0 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%)}
+.winner-card .who{font-size:1.05rem;font-weight:800;color:var(--cyan);word-break:break-word}
+.winner-card .how{color:#cfd2e8;font-size:.78rem;margin-top:1px}
+footer{margin-top:4px;color:#9a9cb2;font-size:.68rem;text-align:center}
+:focus-visible{outline:3px solid var(--cyan);outline-offset:2px}
+@media (max-height:860px){
+  .stage{padding-top:2px;padding-bottom:2px}
+  h1{font-size:1.3rem}.tagline{margin-bottom:4px}
+  .hp-track{height:10px}.ko{font-size:1.45rem;padding:2px 16px}
+  .winner-card .who{font-size:.9rem}table{font-size:.72rem}
+  th,td{padding:2px 5px}
+  .banner{font-size:.75rem}.stars{font-size:.75rem}
+}
+@media (max-width:700px){
+  .hp-row{grid-template-columns:1fr;gap:4px}.vs{justify-self:center}
+  .stage{padding:6px 6px 8px}.frame{padding:8px 9px}h1{font-size:1.25rem}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style></head><body><div class="crt" aria-hidden="true"></div><main class="stage"><div class="frame"><h1>MODEL KOMBAT</h1><p class="tagline">Head-to-Head Benchmark Arena</p><div class="hp-row"><div class="fighter"><div class="fighter-name">Crouton</div><div class="fighter-id">stealth/crouton-alpha</div><div class="hp-track" role="progressbar" aria-label="Crouton HP" aria-valuenow="74" aria-valuemin="0" aria-valuemax="100"><div class="hp-fill" style="width:74.0%"></div></div><div class="hp-num">HP 74/100</div></div><div class="vs">VS</div><div class="fighter"><div class="fighter-name">DS-Flash</div><div class="fighter-id">deepseek/deepseek-v4.1-flash-1017</div><div class="hp-track" role="progressbar" aria-label="DS-Flash HP" aria-valuenow="58" aria-valuemin="0" aria-valuemax="100"><div class="hp-fill" style="width:58.0%"></div></div><div class="hp-num">HP 58/100</div></div></div><div class="banner ">FIGHT ON</div><div class="banner">R2 · Main Event<div class="stars" aria-label="2 star round">★★</div></div><p class="meta">BOUT <b>20261110-120000</b> · CARD <b>Checkout totals refactor — wide card</b> · LANES <b>coding, debugging, sql</b> · POINTS <b>Crouton 3 — DS-Flash 2.5</b></p><h2>R1 — Warm-up (1 pt/task) <span class="state done">done</span></h2><table><tr><th>Task</th><th>Crouton</th><th>DS-Flash</th><th>Result</th></tr><tr><td><b>coding-001</b><br><small>Sum cart line items · coding</small></td><td>Crouton <b>1.00</b> <span class="state done">done</span><small>3.1s · all cases passed</small></td><td>DS-Flash <b>1.00</b> <span class="state done">done</span><small>2.4s · all cases passed</small></td><td class="result result-draw">DRAW</td></tr><tr><td><b>sql-002</b><br><small>Monthly totals per vendor · sql</small></td><td>Crouton <b>0.50</b> <span class="state done">done</span><small>4.0s · 1/2 row sets match</small></td><td class="won hit">DS-Flash <b>1.00</b> <span class="state done">done</span><small>5.1s · rows match exactly</small></td><td class="result">DS-Flash takes the task</td></tr></table><h2>R2 — Main Event (2 pt/task) <span class="state fighting">fighting</span></h2><table><tr><th>Task</th><th>Crouton</th><th>DS-Flash</th><th>Result</th></tr><tr><td><b>debugging-004</b><br><small>Find the duplicate-keys bug · debugging</small></td><td class="won hit">Crouton <b>1.00</b> <span class="state done">done</span><small>5.2s · 3/3 cases</small></td><td>DS-Flash <b>0.50</b> <span class="state done">done</span><small>6.1s · 2/4 cases</small></td><td class="result"> <b style="color:#ff2ea6">★ K.O. ★</b></td></tr><tr><td><b>coding-005</b><br><small>Parse ISO date column · coding</small></td><td>Crouton <b>0.75</b> <span class="state done">done</span><small>4.4s · 3/4 cases</small></td><td>DS-Flash <b>—</b> <span class="state fighting">fighting</span><small>writing answer…</small></td><td class="result">—</td></tr><tr><td><b>sql-006</b><br><small>Window-function top customers · sql</small></td><td>Crouton <b>SKIPPED</b> <span class="state skipped">skipped</span><small>skipped — no code execution</small></td><td>DS-Flash <b>1.00</b> <span class="state done">done</span><small>6.8s · rows match exactly</small></td><td class="result result-skipped">SKIPPED</td></tr><tr><td><b>debugging-007</b><br><small>Repair the retry loop · debugging</small></td><td>Crouton <b>—</b> <span class="state waiting">waiting</span><small>queued</small></td><td>DS-Flash <b>—</b> <span class="state waiting">waiting</span><small>queued</small></td><td class="result">—</td></tr></table><h2>R3 — Championship (3 pt/task) <span class="state waiting">waiting</span></h2><table><tr><th>Task</th><th>Crouton</th><th>DS-Flash</th><th>Result</th></tr><tr><td><b>coding-009</b><br><small>Migrate the totals job to SQL · coding</small></td><td>Crouton <b>—</b> <span class="state waiting">waiting</span><small>queued</small></td><td>DS-Flash <b>—</b> <span class="state waiting">waiting</span><small>queued</small></td><td class="result">—</td></tr><tr><td><b>sql-010</b><br><small>Reconcile the ledger · sql</small></td><td>Crouton <b>—</b> <span class="state waiting">waiting</span><small>queued</small></td><td>DS-Flash <b>—</b> <span class="state waiting">waiting</span><small>queued</small></td><td class="result">—</td></tr></table><h2>Usage</h2><table><tr><th>Fighter</th><th>Latency</th><th>Tokens</th><th>Est. cost</th></tr><tr><td>Crouton</td><td>20.9s</td><td>18420</td><td>$0.0015</td></tr><tr><td>DS-Flash</td><td>21.5s</td><td>17110</td><td>$0.0012</td></tr></table><footer>Scored mechanically by Model Kombat. Errored/skipped rounds are excluded from points. No models were judged by another model.</footer></div></main><script>
+(function(){var k=document.querySelector('.ko');if(k){k.setAttribute('role','status');}})();
+</script></body></html>

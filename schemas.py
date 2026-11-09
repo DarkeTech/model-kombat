@@ -48,29 +48,37 @@ KOMBAT_SCOUT = {
 KOMBAT_RUN_FIGHT = {
     "name": "kombat_run_fight",
     "description": (
-        "Run a pure fight: send every task in the suite (or a subset) to BOTH fighters "
-        "(two model IDs) via the host LLM facade and return both sets of answers plus "
-        "per-call latency/tokens/cost. Use when the user wants two models compared on "
-        "identical prompts. Requires llm.model_override enabled for this plugin "
-        "(config: plugins.entries.model-kombat.llm.allow_model_override: true); "
-        "if that is missing this returns an error explaining exactly what to set. "
-        "Enforces a spend budget (budget_usd, default from settings) and retries "
-        "transient errors once. Also drives the kanban scoreboard when enabled."
+        "Run a pure fight: send every task to BOTH fighters (two model IDs) via the host "
+        "LLM facade and return both sets of answers plus per-call latency/tokens/cost. "
+        "Pass `card` (the object returned by kombat_scout, {\"lanes\":[...],\"seed\":n}, or a "
+        "stored card id) to fight that adaptive card; omit it to fight the legacy fixed "
+        "suite. Rate limits (429) are waited out within a per-fight budget and errored "
+        "(task, fighter) pairs are retried a bounded number of times; exhausted pairs are "
+        "reported as errored (never failed). Requires llm.model_override enabled for this "
+        "plugin. Enforces a spend budget and drives the kanban scoreboard and live state."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "fighter_a": {"type": "string", "description": "First model ID, e.g. stealth/crouton-alpha"},
             "fighter_b": {"type": "string", "description": "Second model ID, e.g. deepseek/deepseek-v4.1-flash-1017"},
+            "card": {
+                "type": "object",
+                "description": "Fight card from kombat_scout (object), {\"lanes\":[...],\"seed\":n}, or {\"id\":\"card-...\"}. A stored card id string is also accepted. Omit for the legacy fixed suite.",
+            },
             "tasks": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional subset of task IDs (e.g. [\"T1\",\"T6\"]). Default: all tasks.",
+                "description": "Optional subset of task IDs. Default: every task in the card (or the whole legacy suite).",
             },
             "temperature": {"type": "number", "description": "Sampling temperature for both fighters. Default 0 for fairness."},
             "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default 2000."},
             "budget_usd": {"type": "number", "description": "Stop the fight once cumulative estimated cost exceeds this. Default 2.0."},
             "timeout_s": {"type": "number", "description": "Per-call timeout in seconds. Default 180."},
+            "max_rate_wait_s": {"type": "number", "description": "Longest single 429 wait in seconds (default from settings, 120)."},
+            "rate_wait_budget_s": {"type": "number", "description": "Total 429 wait budget for the whole fight in seconds. Default 240."},
+            "auto_rematch": {"type": "boolean", "description": "Retry errored (task, fighter) pairs inside this fight. Default from settings (true)."},
+            "pace_ms": {"type": "number", "description": "Polite pause between calls in milliseconds. Default from settings (0)."},
         },
         "required": ["fighter_a", "fighter_b"],
     },
@@ -139,6 +147,10 @@ KOMBAT_SCORE_ANSWERS = {
                 "items": {"type": "string"},
                 "description": "Task IDs that errored for fighter B (excluded from points, not scored as failed).",
             },
+            "card": {
+                "type": "object",
+                "description": "Fight card to score (object, {\"lanes\":...} spec, or {\"id\":\"card-...\"}). Defaults to the card stored with the last fight, else the legacy suite.",
+            },
             "usage": {
                 "type": "object",
                 "description": "Optional per-fighter usage totals from the run tool ({fighter: {latency_s, tokens, cost_usd}}), shown on the scorecard.",
@@ -169,6 +181,51 @@ KOMBAT_REMATCH_ERRORS = {
             "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default from settings."},
             "budget_usd": {"type": "number", "description": "Stop rematching once cumulative cost exceeds this. Default from settings."},
             "timeout_s": {"type": "number", "description": "Per-call timeout in seconds. Default from settings."},
+        },
+        "required": [],
+    },
+}
+
+KOMBAT_RECOMMEND = {
+    "name": "kombat_recommend",
+    "description": (
+        "Ladder-backed recommendation: rank models per lane from scored fight history and "
+        "return the knockout pick (pick, margin, confidence, fights, cost per point, runner-up, why). "
+        "Pass a lane, or input text / a kanban card to classify the lane first. "
+        "{\"board\": true} scouts every open card on the active board, recommends per top lane, "
+        "and writes recommendations.json keyed by kanban task id for board badges. "
+        "{\"ladder\": true} returns the raw per-lane Elo ladder."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "lane": {
+                "type": "string",
+                "enum": ["coding", "debugging", "extraction", "summarization", "reasoning",
+                         "instruction", "recall", "sql"],
+                "description": "Lane to recommend for.",
+            },
+            "input": {
+                "type": "string",
+                "description": "Free text to classify into a lane when no lane is given.",
+            },
+            "card": {
+                "type": "string",
+                "description": "Kanban task id to classify (reads it with `hermes kanban show --json`).",
+            },
+            "board": {
+                "type": "boolean",
+                "description": "Recommend for every open card on the active board and write recommendations.json.",
+            },
+            "ladder": {
+                "type": "boolean",
+                "description": "Return the raw ladder.json instead of a recommendation.",
+            },
+            "candidates": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional candidate model IDs to rank instead of every model in the lane.",
+            },
         },
         "required": [],
     },

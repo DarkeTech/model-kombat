@@ -2,7 +2,8 @@
 
 Pit two Hermes models against each other on the same task set and score the
 fight deterministically. Tools: kombat_list_tasks, kombat_scout, kombat_run_fight,
-kombat_run_agentic_fight, kombat_score_answers, kombat_history, kombat_export.
+kombat_run_agentic_fight, kombat_score_answers, kombat_rematch_errors,
+kombat_recommend, kombat_history, kombat_export.
 Slash command: /kombat (fights run in the background; check /kombat status).
 """
 
@@ -67,6 +68,27 @@ def _handle_kombat(ctx, raw_args: str) -> str:
     if sub == "tasks":
         return tools.kombat_list_tasks({})
 
+    if sub == "scout":
+        if not rest.strip():
+            return "Usage: /kombat scout <task text, or a kanban card id>"
+        args: dict = {"input": rest.strip()}
+        if rest.strip().startswith("card:"):
+            args = {"card": rest.strip()[5:].strip()}
+        elif rest.strip().lower() in ("board", "all"):
+            args = {"board": True}
+        return tools.kombat_scout(args)
+
+    if sub == "recommend":
+        target = rest.strip().lower()
+        if target in ("board", "all", ""):
+            return tools.kombat_recommend({"board": True})
+        if target == "ladder":
+            return tools.kombat_recommend({"ladder": True})
+        return tools.kombat_recommend({"lane": rest.strip()})
+
+    if sub == "ladder":
+        return tools.kombat_recommend({"ladder": True})
+
     if sub in ("fight", "agentic"):
         if " vs " not in rest:
             return (
@@ -114,6 +136,10 @@ def _handle_kombat(ctx, raw_args: str) -> str:
                 "fighter_b": last.get("fighter_b", "Fighter B"),
                 "answers_a": last.get("answers_a", {}),
                 "answers_b": last.get("answers_b", {}),
+                "meta_a": last.get("meta_a", {}),
+                "meta_b": last.get("meta_b", {}),
+                "card": last.get("card"),
+                "fight_id": last.get("fight_id"),
                 "errors_a": [e["task"] for e in errors if e.get("fighter") == last.get("fighter_a")],
                 "errors_b": [e["task"] for e in errors if e.get("fighter") == last.get("fighter_b")],
                 "usage": last.get("usage") or {},
@@ -129,8 +155,11 @@ def _handle_kombat(ctx, raw_args: str) -> str:
         return tools.kombat_export({"format": fmt})
 
     return (
-        "🥊 Model Kombat — choose your fighter. 3 rounds, escalating stakes:\n"
-        "  /kombat tasks                     list the rounds (1pt / 2pt / 3pt + sudden death)\n"
+        "🥊 Model Kombat — choose your fighter. Adaptive cards, escalating stakes:\n"
+        "  /kombat tasks                     list the legacy rounds (1pt / 2pt / 3pt + sudden death)\n"
+        "  /kombat scout <text|card:id|board> classify lanes and build a fight card\n"
+        "  /kombat recommend [lane|board]    ladder knockout pick (board = every open card)\n"
+        "  /kombat ladder                    show the per-lane Elo ladder\n"
         "  /kombat fight <A> vs <B>          pure fight (ctx.llm, budgeted) — background job\n"
         "  /kombat agentic <A> vs <B>        agentic fight (kanban workers, model overrides)\n"
         "  /kombat status                    background fight status\n"
@@ -185,6 +214,12 @@ def register(ctx):
         handler=tools.kombat_rematch_errors,
     )
     ctx.register_tool(
+        name="kombat_recommend",
+        toolset="model_kombat",
+        schema=schemas.KOMBAT_RECOMMEND,
+        handler=tools.kombat_recommend,
+    )
+    ctx.register_tool(
         name="kombat_history",
         toolset="model_kombat",
         schema=schemas.KOMBAT_HISTORY,
@@ -201,7 +236,7 @@ def register(ctx):
         "kombat",
         lambda raw: _handle_kombat(ctx, raw),
         description="Model Kombat: pit two models against each other and score the fight",
-        args_hint="[tasks | fight <A> vs <B> | agentic <A> vs <B> | rematch | score | status | history | export]",
+        args_hint="[tasks | scout <text> | recommend [lane|board] | ladder | fight <A> vs <B> | agentic <A> vs <B> | rematch | score | status | history | export]",
     )
 
     skills_dir = Path(__file__).parent / "skills"
@@ -211,4 +246,4 @@ def register(ctx):
             if child.is_dir() and skill_md.exists():
                 ctx.register_skill(child.name, skill_md)
 
-    logger.debug("Model Kombat registered: 7 tools, /kombat command, bundled skill")
+    logger.debug("Model Kombat registered: 9 tools, /kombat command, bundled skill")

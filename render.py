@@ -1,5 +1,9 @@
 """Model Kombat HTML renderers (arcade-artist owned; SPEC §7/§8).
 
+Originality note: this UI is an original neon-cyan/magenta benchmark arena
+with angled panels and a stamp-style K.O. mark; it is not a copy of any
+specific fighting game's layout, palette, or presentation.
+
 Two entry points, both fully self-contained (inline CSS/JS, zero external
 assets — no fonts, images, logos, sprites or audio; original 16-bit look
 built with pure CSS):
@@ -25,70 +29,86 @@ __all__ = ["render_arena_preview", "render_report"]
 # ---------------------------------------------------------------- stage css
 
 _ARCADE_CSS = """
-:root{color-scheme:dark}
+:root{color-scheme:dark;--cyan:#00e5ff;--magenta:#ff2ea6;--ink:#e8fbff}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
-  background:#0a0a12;color:#f2f2e8;
+  background:#07070f;color:var(--ink);
   font-family:"Courier New",ui-monospace,Menlo,Consolas,monospace;
-  line-height:1.45;-webkit-text-size-adjust:100%}
-.stage{position:relative;max-width:980px;margin:0 auto;padding:24px 18px 40px}
+  line-height:1.35;-webkit-text-size-adjust:100%}
+.stage{position:relative;max-width:1120px;margin:0 auto;padding:4px 10px 4px}
 .crt{pointer-events:none;position:fixed;inset:0;z-index:50;
   background:repeating-linear-gradient(to bottom,
-    rgba(255,255,255,.035) 0 1px,rgba(0,0,0,0) 1px 3px)}
-.frame{border:4px solid #2e2e46;border-radius:8px;background:#10101c;
-  box-shadow:0 0 0 2px #050508,0 0 28px rgba(80,80,180,.25),inset 0 0 60px rgba(0,0,0,.6);
-  padding:18px 20px}
-h1{margin:0 0 4px;font-size:1.9rem;letter-spacing:.18em;text-align:center;
-  color:#ffe23d;text-shadow:3px 3px 0 #b3202e,6px 6px 0 rgba(0,0,0,.55);
-  image-rendering:pixelated}
-.tagline{text-align:center;margin:0 0 16px;color:#9db4ff;letter-spacing:.3em;
-  text-transform:uppercase;font-size:.72rem}
-.hp-row{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:start;margin:8px 0 4px}
+    rgba(0,229,255,.03) 0 1px,rgba(0,0,0,0) 1px 3px)}
+.frame{position:relative;border:3px solid var(--cyan);border-radius:4px;background:#0b0b1a;
+  box-shadow:0 0 0 2px #050508,0 0 22px rgba(0,229,255,.28),inset 0 0 40px rgba(255,46,166,.08);
+  padding:8px 12px;clip-path:polygon(0 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%)}
+h1{margin:0 0 2px;font-size:1.55rem;letter-spacing:.16em;text-align:center;
+  color:var(--cyan);text-shadow:2px 2px 0 var(--magenta),4px 4px 0 rgba(0,0,0,.55)}
+.tagline{text-align:center;margin:0 0 8px;color:var(--magenta);letter-spacing:.28em;
+  text-transform:uppercase;font-size:.65rem}
+.hp-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:start;margin:2px 0}
 .fighter{min-width:0}
-.fighter-name{font-weight:700;font-size:.95rem;color:#fff;word-break:break-word}
-.fighter-id{color:#9db4ff;font-size:.72rem;word-break:break-word}
-.hp-track{height:18px;border:3px solid #d8d8e8;border-radius:3px;background:#1a0606;
-  box-shadow:inset 0 0 0 2px #000;margin-top:4px;overflow:hidden}
-.hp-fill{height:100%;background:linear-gradient(to bottom,#ffe23d,#f5a400);
+.fighter-name{font-weight:700;font-size:.88rem;color:#fff;word-break:break-word}
+.fighter-id{color:var(--cyan);font-size:.66rem;word-break:break-word}
+.hp-track{height:13px;border:2px solid var(--cyan);border-radius:2px;background:#12060f;
+  box-shadow:inset 0 0 0 2px #000;margin-top:3px;overflow:hidden;transform:skewX(-12deg)}
+.hp-fill{height:100%;background:linear-gradient(to bottom,var(--cyan),#0088aa);
   box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
-.hp-fill.low{background:linear-gradient(to bottom,#ff8a7a,#d42a1d)}
-.hp-num{font-size:.72rem;color:#cfd2e8;margin-top:3px}
-.vs{align-self:center;font-size:1.5rem;font-weight:700;color:#ff5470;
-  text-shadow:2px 2px 0 #000}
-.banner{text-align:center;border:3px dashed #ffe23d;color:#ffe23d;
-  padding:7px 10px;margin:14px 0 6px;letter-spacing:.22em;font-weight:700;
-  text-transform:uppercase;font-size:.95rem;background:rgba(255,226,61,.06)}
+.hp-fill.low{background:linear-gradient(to bottom,var(--magenta),#a1116b)}
+.hp-num{font-size:.65rem;color:#cfd2e8;margin-top:2px}
+.vs{align-self:center;font-size:1.25rem;font-weight:700;color:var(--magenta);
+  text-shadow:2px 2px 0 #000;transform:rotate(-3deg)}
+.banner{text-align:center;border:2px dashed var(--magenta);color:var(--magenta);
+  padding:3px 8px;margin:5px 0 2px;letter-spacing:.18em;font-weight:700;
+  text-transform:uppercase;font-size:.82rem;background:rgba(255,46,166,.07);
+  transform:skewX(-4deg)}
 .banner.error{border-color:#ff8a7a;color:#ff8a7a;background:rgba(255,82,64,.08)}
-.banner.standby{border-color:#9db4ff;color:#9db4ff;background:rgba(80,110,255,.06)}
-.stars{text-align:center;color:#ffe23d;font-size:1.05rem;letter-spacing:.4em;margin:2px 0 10px}
-.meta{text-align:center;color:#cfd2e8;font-size:.8rem;margin:0 0 12px}
+.banner.standby{border-color:var(--cyan);color:var(--cyan);background:rgba(0,229,255,.06)}
+.stars{text-align:center;color:var(--cyan);font-size:.9rem;letter-spacing:.35em;margin:1px 0 4px}
+.meta{text-align:center;color:#cfd2e8;font-size:.72rem;margin:0 0 4px;word-break:break-word}
 .meta b{color:#fff}
-table{width:100%;border-collapse:collapse;margin:8px 0 18px;font-size:.85rem}
-th,td{border:2px solid #3a3a56;padding:7px 8px;vertical-align:top;text-align:left}
-th{background:#1d1d30;color:#ffe23d;letter-spacing:.08em}
-td small{display:block;color:#b9bcce;font-size:.75rem;margin-top:2px;word-break:break-word}
+h2{font-size:.8rem;margin:5px 0 2px;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse;margin:1px 0 5px;font-size:.78rem}
+th,td{border:1px solid #2a4a66;padding:3px 6px;vertical-align:top;text-align:left}
+th{background:#12122a;color:var(--cyan);letter-spacing:.06em}
+td small{display:block;color:#b9bcce;font-size:.68rem;margin-top:1px;word-break:break-word}
 .hit{animation:hitflash .5s steps(2) 2}
 @keyframes hitflash{0%{box-shadow:inset 0 0 0 2px #ffffff}50%{box-shadow:inset 0 0 0 2px transparent}}
-td.won{background:rgba(255,226,61,.12)}
-td.won::before{content:"HIT! ";color:#ffe23d;font-weight:700}
-.state{display:inline-block;border:2px solid currentColor;padding:0 5px;
-  font-size:.68rem;letter-spacing:.1em;text-transform:uppercase}
-.state.done{color:#7dff8a}.state.fighting{color:#ffe23d}
+td.won{background:rgba(0,229,255,.10)}
+td.won::before{content:"HIT! ";color:var(--cyan);font-weight:700}
+td.result-draw{color:var(--cyan);font-weight:700;text-transform:uppercase}
+td.result-error{color:#ff8a7a;font-weight:700}
+td.result-skipped{color:#9db4ff;font-weight:700}
+.state{display:inline-block;border:1px solid currentColor;padding:0 4px;
+  font-size:.60rem;letter-spacing:.08em;text-transform:uppercase}
+.state.done{color:#7dff8a}.state.fighting{color:var(--cyan)}
 .state.error{color:#ff8a7a}.state.waiting,.state.skipped{color:#9a9cb2}
-.ko-wrap{position:relative;text-align:center;margin:14px 0}
-.ko{position:relative;display:inline-block;padding:6px 28px;font-size:2.6rem;font-weight:800;
-  letter-spacing:.14em;color:#ffb9b0;border:6px double #ff2a1d;border-radius:6px;
-  background:rgba(255,42,29,.12);transform:rotate(-6deg);
-  box-shadow:0 0 22px rgba(255,42,29,.45);animation:kopop .45s steps(3) both}
-@keyframes kopop{from{transform:rotate(-6deg) scale(2.4);opacity:0}
-  to{transform:rotate(-6deg) scale(1);opacity:1}}
-.winner-card{border:4px solid #ffe23d;background:#1a1a10;border-radius:6px;
-  padding:12px;text-align:center;margin:12px 0}
-.winner-card .who{font-size:1.25rem;font-weight:800;color:#ffe23d;word-break:break-word}
-.winner-card .how{color:#cfd2e8;font-size:.85rem;margin-top:2px}
-footer{margin-top:18px;color:#9a9cb2;font-size:.75rem;text-align:center}
-:focus-visible{outline:3px solid #9db4ff;outline-offset:2px}
+.ko-wrap{position:relative;text-align:center;margin:4px 0}
+.ko{position:relative;display:inline-block;padding:3px 22px;font-size:1.9rem;font-weight:800;
+  letter-spacing:.14em;color:#fff;border:4px double var(--magenta);border-radius:2px;
+  background:rgba(255,46,166,.18);transform:rotate(-5deg);
+  box-shadow:0 0 18px rgba(255,46,166,.5),inset 0 0 12px rgba(0,229,255,.25);animation:kopop .45s steps(3) both}
+@keyframes kopop{from{transform:rotate(-5deg) scale(2.4);opacity:0}
+  to{transform:rotate(-5deg) scale(1);opacity:1}}
+.winner-card{border:3px solid var(--cyan);background:#08121a;border-radius:4px;
+  padding:5px;text-align:center;margin:5px 0;clip-path:polygon(0 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%)}
+.winner-card .who{font-size:1.05rem;font-weight:800;color:var(--cyan);word-break:break-word}
+.winner-card .how{color:#cfd2e8;font-size:.78rem;margin-top:1px}
+footer{margin-top:4px;color:#9a9cb2;font-size:.68rem;text-align:center}
+:focus-visible{outline:3px solid var(--cyan);outline-offset:2px}
+@media (max-height:860px){
+  .stage{padding-top:2px;padding-bottom:2px}
+  h1{font-size:1.3rem}.tagline{margin-bottom:4px}
+  .hp-track{height:10px}.ko{font-size:1.45rem;padding:2px 16px}
+  .winner-card .who{font-size:.9rem}table{font-size:.72rem}
+  th,td{padding:2px 5px}
+  .banner{font-size:.75rem}.stars{font-size:.75rem}
+}
+@media (max-width:700px){
+  .hp-row{grid-template-columns:1fr;gap:4px}.vs{justify-self:center}
+  .stage{padding:6px 6px 8px}.frame{padding:8px 9px}h1{font-size:1.25rem}
+}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -179,11 +199,11 @@ def _fighter_label(fighters: Any, side: str) -> tuple[str, str]:
 # -------------------------------------------------------------- arena preview
 
 _STATUS_BANNERS = {
-    "idle": ("STANDBY — NO FIGHT ON DECK", "standby"),
-    "fighting": ("FIGHT!", ""),
+    "idle": ("STANDBY — NO BOUT ON DECK", "standby"),
+    "fighting": ("FIGHT ON", ""),
     "scoring": ("SCORING…", "standby"),
     "done": ("FIGHT OVER", ""),
-    "error": ("FIGHT ERROR — CHECK THE TABLE BELOW", "error"),
+    "error": ("BOUT ERROR — CHECK THE TABLE BELOW", "error"),
 }
 
 
@@ -193,7 +213,12 @@ def _arena_task_row(task: Mapping[str, Any], name_a: str, name_b: str) -> str:
         t = t if isinstance(t, Mapping) else {}
         state = str(t.get("state") or "waiting")
         score = t.get("score")
-        score_txt = f"{float(score):.2f}" if score is not None else "—"
+        if state == "skipped":
+            score_txt = "SKIPPED"
+        elif state == "error":
+            score_txt = "ERROR"
+        else:
+            score_txt = f"{float(score):.2f}" if score is not None else "—"
         meta = str(t.get("detail") or "")
         extra = []
         if t.get("latency_s") is not None:
@@ -219,14 +244,33 @@ def _arena_task_row(task: Mapping[str, Any], name_a: str, name_b: str) -> str:
 
     ko_note = ""
     if task.get("ko"):
-        ko_note = ' <b style="color:#ff8a7a">★ K.O. ★</b>'
+        ko_note = ' <b style="color:#ff2ea6">★ K.O. ★</b>'
+    # Result column: DRAW only when both scored and equal; SKIPPED/ERROR distinct.
+    ta = _as_mapping(task.get("a"))
+    tb = _as_mapping(task.get("b"))
+    sa_state, sb_state = str(ta.get("state") or ""), str(tb.get("state") or "")
+    sa_score, sb_score = ta.get("score"), tb.get("score")
+    result_txt, result_cls = "—", ""
+    if ko_note:
+        result_txt, result_cls = ko_note, ""
+    elif "error" in (sa_state, sb_state):
+        result_txt, result_cls = "ERROR", " result-error"
+    elif "skipped" in (sa_state, sb_state):
+        result_txt, result_cls = "SKIPPED", " result-skipped"
+    elif sa_state == "done" and sb_state == "done" and sa_score is not None and sb_score is not None:
+        if float(sa_score) == float(sb_score):
+            result_txt, result_cls = "DRAW", " result-draw"
+        elif float(sa_score) > float(sb_score):
+            result_txt = f"{_esc(name_a)} takes the task"
+        else:
+            result_txt = f"{_esc(name_b)} takes the task"
     lane = task.get("lane")
     return (
         f"<tr><td><b>{_esc(task.get('id', '?'))}</b>"
         f"<br><small>{_esc(task.get('title', ''))}"
         f"{' · ' + _esc(lane) if lane else ''}</small></td>"
         f"{cell('a', name_a)}{cell('b', name_b)}"
-        f"<td>{ko_note or '—'}</td></tr>"
+        f'<td class="result{result_cls}">{result_txt}</td></tr>'
     )
 
 
@@ -246,7 +290,7 @@ def render_arena_preview(live: dict) -> str:
     card = _as_mapping(live.get("card"))
     lanes = ", ".join(str(x) for x in (card.get("lanes") or [])) or "—"
     meta = (
-        f"FIGHT <b>{_esc(live.get('fight_id') or '???')}</b> · "
+        f"BOUT <b>{_esc(live.get('fight_id') or '???')}</b> · "
         f"CARD <b>{_esc(card.get('title') or 'Untitled')}</b> · "
         f"LANES <b>{_esc(lanes)}</b> · "
         f"POINTS <b>{_esc(name_a)} {float(points.get('a', 0) or 0):g} — "
@@ -267,9 +311,10 @@ def render_arena_preview(live: dict) -> str:
     round_banner = ""
     if current:
         cid = str(current.get("id", ""))
-        idx = "ROUND " + cid if cid.isdigit() else cid
+        cname = str(current.get("name") or "BOUT")
+        idx = f"ROUND {cid} · {cname}" if cid.isdigit() else f"{cid} · {cname}" if cid else cname
         round_banner = (
-            f'<div class="banner">{_esc(idx)} — {_esc(current.get("name") or "FIGHT")}'
+            f'<div class="banner">{_esc(idx)}'
             f'<div class="stars" aria-label="{current.get("points", 0)} star round">'
             f"{_stars(current.get('points', 0) or 0)}</div></div>"
         )
@@ -288,7 +333,7 @@ def render_arena_preview(live: dict) -> str:
             f"({_esc(rnd.get('points', 0))} pt/task) "
             f'<span class="state {_esc(rnd.get("state", "waiting"))}">'
             f"{_esc(rnd.get('state', 'waiting'))}</span></h2>"
-            "<table><tr><th>Task</th><th>Scorecard</th><th></th><th>Result</th></tr>"
+            f"<table><tr><th>Task</th><th>{_esc(name_a)}</th><th>{_esc(name_b)}</th><th>Result</th></tr>"
             f"{rows}</table>"
         )
 
@@ -300,7 +345,7 @@ def render_arena_preview(live: dict) -> str:
             if isinstance(t, Mapping)
         )
         if rows:
-            sections.append(f"<h2>SD — Sudden Death</h2><table>{rows}</table>")
+            sections.append(f"<h2>SD — Sudden Death</h2><table><tr><th>Task</th><th>{_esc(name_a)}</th><th>{_esc(name_b)}</th><th>Result</th></tr>{rows}</table>")
 
     ko_html = (
         '<div class="ko-wrap"><span class="ko">K.O.</span></div>'
@@ -328,7 +373,7 @@ def render_arena_preview(live: dict) -> str:
         if isinstance(u, Mapping):
             usage_rows[key] = u
     body = (
-        "<h1>MODEL KOMBAT</h1><p class=\"tagline\">insert coin · press start</p>"
+        "<h1>MODEL KOMBAT</h1><p class=\"tagline\">Head-to-Head Benchmark Arena</p>"
         '<div class="hp-row">'
         f"{_hp_block('a', name_a, id_a, hp_a)}"
         '<div class="vs">VS</div>'
@@ -384,13 +429,19 @@ def render_report(
             fa, fb = _fraction_of(sa), _fraction_of(sb)
             if r.get("excluded"):
                 verdict = f"excluded ({r['excluded']})"
+            elif sa.get("errored") or sb.get("errored") or sa.get("state") == "error" or sb.get("state") == "error":
+                verdict = "ERROR"
+            elif sa.get("skipped") or sb.get("skipped") or sa.get("state") == "skipped" or sb.get("state") == "skipped":
+                verdict = "SKIPPED"
             elif fa is not None and fb is not None and fa > fb:
                 verdict = f"{_esc(fighter_a)} takes the task"
             elif fa is not None and fb is not None and fb > fa:
                 verdict = f"{_esc(fighter_b)} takes the task"
+            elif fa is not None and fb is not None and fa == fb:
+                verdict = "DRAW"
             else:
-                verdict = "Task is a draw"
-            ko_note = ' — <b style="color:#ff8a7a">K.O.</b>' if r.get("ko") else ""
+                verdict = "—"
+            ko_note = ' — <b style="color:#ff2ea6">K.O.</b>' if r.get("ko") else ""
             attr_a = ' class="won hit"' if (fa is not None and fb is not None and fa > fb) else ""
             attr_b = ' class="won hit"' if (fa is not None and fb is not None and fb > fa) else ""
 
@@ -421,7 +472,7 @@ def render_report(
     ko_html = '<div class="ko-wrap"><span class="ko">K.O.</span></div>' if ko else ""
     winner_line = f"{_esc(winner)} wins by K.O." if ko else f"{_esc(winner)} wins the fight"
     body = (
-        "<h1>MODEL KOMBAT</h1><p class=\"tagline\">final scorecard</p>"
+        "<h1>MODEL KOMBAT</h1><p class=\"tagline\">Head-to-Head Benchmark Arena · Final Scorecard</p>"
         '<div class="hp-row">'
         f"{_hp_block('a', fighter_a, fighter_a, hp_a)}"
         '<div class="vs">VS</div>'

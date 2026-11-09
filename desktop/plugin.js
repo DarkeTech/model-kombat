@@ -8,7 +8,7 @@ import {
   KANBAN_CARD_BADGE_HUES,
   host
 } from '@hermes/plugin-sdk'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ function taskCell(task, side, name) {
   const sideData = task && task[side]
   const state = (sideData && sideData.state) || 'waiting'
   const score = sideData && sideData.score
-  const scoreText = typeof score === 'number' ? score.toFixed(2) : '—'
+  const scoreText = state === 'skipped' ? 'SKIPPED' : state === 'error' ? 'ERROR' : typeof score === 'number' ? score.toFixed(2) : '—'
   const detail = (sideData && sideData.detail) || ''
   const other = task && task[side === 'a' ? 'b' : 'a']
   const won =
@@ -170,6 +170,24 @@ function taskCell(task, side, name) {
   })
 }
 
+function resultCell(task, nameA, nameB) {
+  const ta = (task && task.a) || {}
+  const tb = (task && task.b) || {}
+  let text = '—'
+  if (task && task.ko) text = '★ K.O. ★'
+  else if (ta.state === 'error' || tb.state === 'error') text = 'ERROR'
+  else if (ta.state === 'skipped' || tb.state === 'skipped') text = 'SKIPPED'
+  else if (ta.state === 'done' && tb.state === 'done' && typeof ta.score === 'number' && typeof tb.score === 'number') {
+    if (ta.score === tb.score) text = 'DRAW'
+    else if (ta.score > tb.score) text = `${nameA} takes the task`
+    else text = `${nameB} takes the task`
+  }
+  return jsx('td', {
+    style: { padding: '6px 8px', border: '1px solid var(--ui-border)', verticalAlign: 'top', fontSize: '0.8rem', color: 'var(--ui-text)' },
+    children: text
+  })
+}
+
 function roundsList(live, nameA, nameB) {
   const rounds = (live && live.rounds) || []
   if (!rounds.length) {
@@ -191,7 +209,8 @@ function roundsList(live, nameA, nameB) {
           jsx('thead', {}, jsx('tr', {}, [
             jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: 'Task' }),
             jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: nameA }),
-            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: nameB })
+            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: nameB }),
+            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: 'Result' })
           ])),
           jsx('tbody', {}, tasks.map((task) => jsxs('tr', {
             key: task.id || (task.title || 'task'),
@@ -213,7 +232,8 @@ function roundsList(live, nameA, nameB) {
                 ]
               }),
               taskCell(task, 'a', nameA),
-              taskCell(task, 'b', nameB)
+              taskCell(task, 'b', nameB),
+              resultCell(task, nameA, nameB)
             ]
           })))
         ]
@@ -229,11 +249,11 @@ function arenaView(live) {
   const status = (live && live.status) || 'idle'
   const points = (live && live.points) || {}
   const bannerByStatus = {
-    idle: 'STANDBY — NO FIGHT ON DECK',
-    fighting: 'FIGHT!',
+    idle: 'STANDBY — NO BOUT ON DECK',
+    fighting: 'FIGHT ON',
     scoring: 'SCORING…',
     done: 'FIGHT OVER',
-    error: 'FIGHT ERROR — CHECK BELOW'
+    error: 'BOUT ERROR — CHECK BELOW'
   }
   const children = [
     jsx('div', {
@@ -349,11 +369,9 @@ function KombatPage({ ctx }) {
   const [ladder, setLadder] = useState(null)
   const [history, setHistory] = useState(null)
   const [loadError, setLoadError] = useState(null)
-  const loadedRef = useRef(false)
 
   useEffect(() => {
-    if (loadedRef.current || !ctx) return
-    loadedRef.current = true
+    if (!ctx) return
     let cancelled = false
     Promise.all([ctx.rest('/ladder'), ctx.rest('/history?limit=20')])
       .then(([ladderData, historyData]) => {
@@ -402,7 +420,7 @@ function KombatPage({ ctx }) {
       }),
       jsx('p', {
         style: { textAlign: 'center', color: 'var(--ui-text-tertiary)', fontSize: '0.75rem', letterSpacing: '0.3em', textTransform: 'uppercase', marginTop: 0 },
-        children: 'insert coin · press start'
+        children: 'Head-to-Head Benchmark Arena'
       }),
       loading && !live
         ? jsx('div', { style: { padding: '12px', color: 'var(--ui-text-tertiary)' }, children: 'Warming up the arena…' })
@@ -503,14 +521,17 @@ function KombatChip() {
 function badgeFor(cardId) {
   const rec = recMap[cardId]
   if (!rec) return null
-  const label = rec.short || rec.pick || 'picked'
+  // Board limits (KANBAN_CARD_BADGE_LIMITS): label <=24 chars, tooltip <=160;
+  // we return exactly one badge per card (<=2 allowed), tone from HUES.
+  const label = String(rec.short || rec.pick || 'picked').slice(0, 24)
+  if (!label.trim()) return null
   const tooltip = [
     `Kombat pick: ${rec.pick || label}`,
     rec.lane ? `lane: ${rec.lane}` : '',
     rec.confidence ? `confidence: ${rec.confidence}` : '',
     typeof rec.elo === 'number' ? `elo: ${Math.round(rec.elo)}` : ''
-  ].filter(Boolean).join(' · ')
-  return { label: String(label), tone: KANBAN_CARD_BADGE_HUES[2], tooltip }
+  ].filter(Boolean).join(' · ').slice(0, 160)
+  return { label, tone: KANBAN_CARD_BADGE_HUES[2], tooltip }
 }
 
 // --- plugin -------------------------------------------------------------------
@@ -523,6 +544,7 @@ export default {
     // contribution (the board then repaints), so dispose only the newest.
     let badgeDisposer = null
     const reRegisterBadges = () => {
+      if (badgeDisposer) { try { badgeDisposer() } catch (err) { /* host already replaced it */ } badgeDisposer = null }
       badgeDisposer = ctx.register({
         id: 'badges',
         area: KANBAN_CARD_AREAS.badges,
@@ -561,12 +583,15 @@ export default {
     ctx.setInterval(loadRecs, RECS_POLL_MS)
 
     // Live push: the engine broadcasts fight updates over the global stream.
-    host.onEvent(LIVE_EVENT, (event) => {
+    // host.onEvent returns a disposer — wire it to ctx.onDispose so a
+    // hot-reload/disable does not stack live listeners (ESM cannot unload).
+    const liveEventDisposer = host.onEvent(LIVE_EVENT, (event) => {
       const payload = event && event.payload
       if (payload && typeof payload === 'object') {
         setLive({ live: payload, loading: false, error: null })
       }
     })
+    if (typeof liveEventDisposer === 'function') ctx.onDispose(liveEventDisposer)
 
     ctx.register({
       id: 'arena',

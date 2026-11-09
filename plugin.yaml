@@ -8,11 +8,12 @@ capabilities:
   - llm.model_override
 provides_tools:
   - kombat_list_tasks
-  - kombat_scout
   - kombat_run_fight
+  - kombat_scout
   - kombat_run_agentic_fight
   - kombat_score_answers
   - kombat_rematch_errors
+  - kombat_recommend
   - kombat_history
   - kombat_export
 config_schema:
@@ -44,6 +45,21 @@ config_schema:
     type: float
     default: 180
     label: "Per-call timeout (seconds)"
+  pace_ms:
+    type: int
+    default: 0
+    label: "Polite pacing between calls (ms)"
+    description: "Pause before each model call to avoid tripping provider rate limits. 0 = no pause."
+  max_rate_wait_s:
+    type: float
+    default: 120
+    label: "Longest 429 wait (seconds)"
+    description: "When a provider says retry_after, wait at most this long per 429 instead of failing the task."
+  auto_rematch:
+    type: bool
+    default: true
+    label: "Auto-rematch errored tasks inside a fight"
+    description: "Retry errored (task, fighter) pairs up to 2 extra passes within the same fight. Exhausted pairs stay errored (never failed)."
   agentic_timeout_s:
     type: int
     default: 600

@@ -33,14 +33,14 @@ def find_chromium() -> str | None:
     return None
 
 
-def screenshot(chromium: str, html_path: Path, png_path: Path) -> None:
+def screenshot(chromium: str, html_path: Path, png_path: Path, width: int = 1280, height: int = 800) -> None:
     cmd = [
         chromium,
         "--headless=new",
         "--no-sandbox",
         "--disable-gpu",
         "--hide-scrollbars",
-        "--window-size=1280,800",
+        f"--window-size={width},{height}",
         f"--screenshot={png_path}",
         html_path.as_uri(),
     ]
@@ -76,6 +76,11 @@ def main() -> int:
         screenshot(chromium, html_path, png_path)
         print(f"{html_path} ({html_path.stat().st_size} bytes)")
         print(f"{png_path} ({png_path.stat().st_size} bytes)")
+        if fixture.stem == "live_sample_mid":
+            for w in (900, 1600):
+                wide_png = PREVIEWS / f"arena_mid_{w}.png"
+                screenshot(chromium, html_path, wide_png, width=w)
+                print(f"{wide_png} ({wide_png.stat().st_size} bytes)")
     return 0
 
 

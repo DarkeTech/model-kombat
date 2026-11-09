@@ -22,7 +22,10 @@ BOARD = "model-kombat"
 
 
 def _ctx():
-    from . import tools
+    try:
+        from . import tools
+    except ImportError:  # top-level import outside the plugin package (tests)
+        import tools  # type: ignore
 
     return tools._CTX
 
@@ -66,10 +69,18 @@ def _extract_json(text: str):
 class Scoreboard:
     """Live fight scoreboard on the model-kombat board. Best-effort only."""
 
-    def __init__(self, fighter_a: str, fighter_b: str, suite: dict):
+    def __init__(self, fighter_a: str, fighter_b: str, suite: dict | None = None, card: dict | None = None):
         self.fighter_a = fighter_a
         self.fighter_b = fighter_b
-        self.suite = suite
+        self.suite = suite or {}
+        # Rounds come from the fight card when one is given; the legacy suite is
+        # just the fallback shape (both expose {"rounds": [{id,name,points,tasks}]}).
+        if isinstance(card, dict) and isinstance(card.get("rounds"), list) and card["rounds"]:
+            self.rounds = card["rounds"]
+            self.title = card.get("title")
+        else:
+            self.rounds = self.suite.get("rounds") or []
+            self.title = self.suite.get("title")
         self.ids: dict = {"parent": None, "rounds": {}}
         self.errors: list[str] = []
 
@@ -84,17 +95,21 @@ class Scoreboard:
         # No parent/child links: kanban gates children on parents, which would
         # deadlock round completion (rounds must finish before the fight card).
         # Cards group visually by title + creation time instead.
-        for rnd in self.suite["rounds"]:
+        for rnd in self.rounds:
             if round_ids is not None and rnd["id"] not in round_ids:
                 continue
             title = f"{rnd['id']} — {rnd['name']} ({rnd['points']} pt/task)"
-            body = "Tasks: " + ", ".join(rnd["tasks"]) + f"\nFighters: {self.fighter_a} vs {self.fighter_b}"
+            body = "Tasks: " + ", ".join(
+                str(t.get("id")) if isinstance(t, dict) else str(t) for t in rnd["tasks"]
+            ) + f"\nFighters: {self.fighter_a} vs {self.fighter_b}"
             ok, out = self._run(
                 _cli("--board", BOARD, "create", title, "--body", body, "--json")
             )
             data = _extract_json(out) if ok else None
             self.ids["rounds"][rnd["id"]] = (data or {}).get("id")
         parent_title = f"{title_prefix}: {self.fighter_a} vs {self.fighter_b}"
+        if self.title:
+            parent_title += f" — {self.title}"
         ok, out = self._run(
             _cli("--board", BOARD, "create", parent_title,
                  "--body", "Model Kombat live scoreboard. Display only — cards are unassigned and never dispatched.",
@@ -133,6 +148,8 @@ class Scoreboard:
                     + (f" excluded: {t['excluded']}" if t.get("excluded") else "")
                 )
             text = "Round scored:\n" + "\n".join(lines)
+            if rnd.get("points_a") is not None or rnd.get("points_b") is not None:
+                text += f"\nRound stake ({rnd.get('points')} pt): {rnd.get('points_a', 0)}–{rnd.get('points_b', 0)}"
             self._run(_cli("--board", BOARD, "comment", card, text))
             if self._card_done(card):
                 continue  # re-score of a finished bout: comment only, no state change
@@ -186,7 +203,10 @@ def run_agentic_fight(args: dict) -> dict:
     normal scoring flow applies unchanged. Worker billing is separate from
     ctx.llm spend and is NOT budget-capped here — per-task max-runtime applies.
     """
-    from . import tools
+    try:
+        from . import tools
+    except ImportError:  # top-level import outside the plugin package (tests)
+        import tools  # type: ignore
 
     fighter_a = str(args.get("fighter_a") or tools._cfg("fighter_a", "") or "").strip()
     fighter_b = str(args.get("fighter_b") or tools._cfg("fighter_b", "") or "").strip()

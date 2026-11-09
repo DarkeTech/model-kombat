@@ -1,0 +1,61 @@
+{
+  "status": "fighting",
+  "fight_id": "20261110-120000",
+  "card": {"title": "Checkout totals refactor — wide card", "lanes": ["coding", "debugging", "sql"]},
+  "fighters": {
+    "a": {"id": "stealth/crouton-alpha", "short": "Crouton"},
+    "b": {"id": "deepseek/deepseek-v4.1-flash-1017", "short": "DS-Flash"}
+  },
+  "hp": {"a": 74, "b": 58},
+  "rounds": [
+    {
+      "id": "R1", "name": "Warm-up", "points": 1, "state": "done",
+      "tasks": [
+        {"id": "coding-001", "lane": "coding", "title": "Sum cart line items",
+         "a": {"state": "done", "score": 1.0, "latency_s": 3.1, "cost_usd": 0.0002, "detail": "all cases passed"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 2.4, "cost_usd": 0.0001, "detail": "all cases passed"}},
+        {"id": "sql-002", "lane": "sql", "title": "Monthly totals per vendor",
+         "a": {"state": "done", "score": 0.5, "latency_s": 4.0, "cost_usd": 0.0003, "detail": "1/2 row sets match"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 5.1, "cost_usd": 0.0002, "detail": "rows match exactly"}}
+      ]
+    },
+    {
+      "id": "R2", "name": "Main Event", "points": 2, "state": "fighting",
+      "tasks": [
+        {"id": "debugging-004", "lane": "debugging", "title": "Find the duplicate-keys bug",
+         "a": {"state": "done", "score": 1.0, "latency_s": 5.2, "cost_usd": 0.0004, "detail": "3/3 cases"},
+         "b": {"state": "done", "score": 0.5, "latency_s": 6.1, "cost_usd": 0.0003, "detail": "2/4 cases"}, "ko": true},
+        {"id": "coding-005", "lane": "coding", "title": "Parse ISO date column",
+         "a": {"state": "done", "score": 0.75, "latency_s": 4.4, "cost_usd": 0.0003, "detail": "3/4 cases"},
+         "b": {"state": "fighting", "score": null, "latency_s": null, "cost_usd": null, "detail": "writing answer…"}},
+        {"id": "sql-006", "lane": "sql", "title": "Window-function top customers",
+         "a": {"state": "skipped", "score": null, "latency_s": null, "cost_usd": null, "detail": "skipped — no code execution"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 6.8, "cost_usd": 0.0003, "detail": "rows match exactly"}},
+        {"id": "debugging-007", "lane": "debugging", "title": "Repair the retry loop",
+         "a": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"},
+         "b": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"}}
+      ]
+    },
+    {
+      "id": "R3", "name": "Championship", "points": 3, "state": "waiting",
+      "tasks": [
+        {"id": "coding-009", "lane": "coding", "title": "Migrate the totals job to SQL",
+         "a": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"},
+         "b": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"}},
+        {"id": "sql-010", "lane": "sql", "title": "Reconcile the ledger",
+         "a": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"},
+         "b": {"state": "waiting", "score": null, "latency_s": null, "cost_usd": null, "detail": "queued"}}
+      ]
+    }
+  ],
+  "sudden_death": null,
+  "winner": null,
+  "ko": false,
+  "points": {"a": 3.0, "b": 2.5},
+  "usage": {
+    "a": {"cost_usd": 0.0015, "tokens": 18420, "latency_s": 20.9},
+    "b": {"cost_usd": 0.0012, "tokens": 17110, "latency_s": 21.5}
+  },
+  "report_path": null,
+  "updated": "2026-11-10T12:00:00+00:00"
+}

@@ -6,7 +6,7 @@
       "lane": "summarization",
       "difficulty": 1,
       "title": "Summarize in exactly 10 words",
-      "prompt": "Summarize the following passage in exactly 10 words. Preserve all numbers and names.\n\nPassage:\n\"On May 5, 2026, the company announced a profit of $5 million.\"\n\nYour summary must be exactly 10 words.",
+      "prompt": "Summarize the following passage in exactly 10 words. Preserve all numbers and names.\n\nPassage:\n\n\"On May 5, 2026, the company announced a profit of $5 million.\"\n\nYour summary must be exactly 10 words.",
       "check": {
         "type": "constraints",
         "words": {
@@ -18,14 +18,14 @@
           "$5 million"
         ]
       },
-      "reference": "May 5 2026 company announced $5 million profit in the"
+      "reference": "May 5, 2026 company announced profit of $5 million today"
     },
     {
       "id": "summarization-002",
       "lane": "summarization",
       "difficulty": 1,
       "title": "Summarize in at most 15 words",
-      "prompt": "Summarize the following passage in at most 15 words. Keep the key numbers and names.\n\nPassage:\n\"The project started on January 1, 2026 and ended on December 31, 2026, costing $2.4 million.\"\n\nYour summary must be 15 words or fewer.",
+      "prompt": "Summarize the following passage in at most 15 words. Keep the key numbers and names.\n\nPassage:\n\n\"The project started on January 1, 2026 and ended on December 31, 2026, costing $2.4 million.\"\n\nYour summary must be 15 words or fewer.",
       "check": {
         "type": "constraints",
         "words": {
@@ -37,14 +37,14 @@
           "$2.4 million"
         ]
       },
-      "reference": "Project Jan 1 2026 to Dec 31 2026 cost $2.4 million"
+      "reference": "Project January 1, 2026 to December 31, 2026 cost $2.4 million"
     },
     {
       "id": "summarization-003",
       "lane": "summarization",
       "difficulty": 2,
       "title": "Summarize in exactly 20 words with required phrases",
-      "prompt": "Summarize the following passage in exactly 20 words. Must include the date, the company name, and the profit figure.\n\nPassage:\n\"On March 15, 2026, TechCorp announced quarterly profits of $12.5 million, exceeding expectations.\"\n\nYour summary must be exactly 20 words and include \"March 15, 2026\", \"TechCorp\", and \"$12.5 million\".",
+      "prompt": "Summarize the following passage in exactly 20 words. Must include the date, the company name, and the profit figure.\n\nPassage:\n\n\"On March 15, 2026, TechCorp announced quarterly profits of $12.5 million, exceeding expectations.\"\n\nYour summary must be exactly 20 words and include \"March 15, 2026\", \"TechCorp\", and \"$12.5 million\".",
       "check": {
         "type": "constraints",
         "words": {
@@ -57,14 +57,14 @@
           "$12.5 million"
         ]
       },
-      "reference": "On March 15 2026 TechCorp announced quarterly profits of $12.5 million which exceeded analyst expectations by a large margin today"
+      "reference": "On March 15, 2026 TechCorp announced quarterly profits of $12.5 million which exceeded analyst expectations by a large margin today"
     },
     {
       "id": "summarization-004",
       "lane": "summarization",
       "difficulty": 2,
       "title": "Summarize in exactly 25 words",
-      "prompt": "Summarize the following passage in exactly 25 words. Keep the key numbers and names.\n\nPassage:\n\"The city council approved the budget on April 10, 2026, allocating $8.7 million for schools and $3.2 million for infrastructure.\"\n\nYour summary must be exactly 25 words.",
+      "prompt": "Summarize the following passage in exactly 25 words. Keep the key numbers and names.\n\nPassage:\n\n\"The city council approved the budget on April 10, 2026, allocating $8.7 million for schools and $3.2 million for infrastructure.\"\n\nYour summary must be exactly 25 words.",
       "check": {
         "type": "constraints",
         "words": {
@@ -77,14 +77,14 @@
           "$3.2 million"
         ]
       },
-      "reference": "City council approved budget April 10 2026 allocating 8.7 million for schools 3.2 million for infrastructure"
+      "reference": "On April 10, 2026, city council approved budget allocating $8.7 million for schools and $3.2 million for infrastructure to improve education and community facilities today."
     },
     {
       "id": "summarization-005",
       "lane": "summarization",
       "difficulty": 3,
       "title": "Summarize in exactly 30 words with multiple constraints",
-      "prompt": "Summarize the following passage in exactly 30 words. Must include the date, the product name, and the price.\n\nPassage:\n\"On July 22, 2026, the new gadget \"GizmoX\" was launched at a price of $99.99.\"\n\nYour summary must be exactly 30 words and include \"July 22, 2026\", \"GizmoX\", and \"$99.99\".",
+      "prompt": "Summarize the following passage in exactly 30 words. Must include the date, the product name, and the price.\n\nPassage:\n\n\"On July 22, 2026, the new gadget \\\"GizmoX\\\" was launched at a price of $99.99.\"\n\nYour summary must be exactly 30 words and include \"July 22, 2026\", \"GizmoX\", and \"$99.99\".",
       "check": {
         "type": "constraints",
         "words": {
@@ -97,14 +97,14 @@
           "$99.99"
         ]
       },
-      "reference": "On July 22 2026 the new gadget GizmoX was launched at a price of $99.99 with great fanfare and excitement"
+      "reference": "On July 22, 2026, the new gadget GizmoX was launched at a price of $99.99, attracting attention from consumers and media worldwide due to its innovative features in the market."
     },
     {
       "id": "summarization-006",
       "lane": "summarization",
       "difficulty": 3,
       "title": "Summarize in at most 20 words",
-      "prompt": "Summarize the following passage in at most 20 words. Keep the key numbers and names.\n\nPassage:\n\"The research study conducted from January 2026 to June 2026 found a 15% increase in efficiency after the new algorithm was implemented.\"\n\nYour summary must be 20 words or fewer.",
+      "prompt": "Summarize the following passage in at most 20 words. Keep the key numbers and names.\n\nPassage:\n\n\"The research study conducted from January 2026 to June 2026 found a 15% increase in efficiency after the new algorithm was implemented.\"\n\nYour summary must be 20 words or fewer.",
       "check": {
         "type": "constraints",
         "words": {
@@ -116,7 +116,7 @@
           "15% increase"
         ]
       },
-      "reference": "Study Jan 2026 to Jun 2026 found 15% efficiency increase after new algorithm"
+      "reference": "Study January 2026 to June 2026 found 15% increase after new algorithm"
     }
   ]
 }

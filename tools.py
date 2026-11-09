@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -84,6 +85,395 @@ def _load_tasks() -> list[dict]:
     """Back-compat for older tests/callers: flat task list."""
     suite = _load_suite()
     return [suite["tasks"][tid] for tid in suite["order"]]
+
+
+# ------------------------------------------------------- cards + task lookup
+
+
+def _cards_path() -> Path:
+    return _data_dir() / "cards.json"
+
+
+def _read_json_file(path: Path, default):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return default
+
+
+def _write_json_atomic(path: Path, payload) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:  # noqa: BLE001 — best-effort persistence
+        pass
+
+
+def _store_card(card: dict) -> None:
+    """Remember a scouted card so kombat_run_fight can take its id later."""
+    if not isinstance(card, dict) or not card.get("id"):
+        return
+    data = _read_json_file(_cards_path(), {})
+    if not isinstance(data, dict):
+        data = {}
+    data[str(card["id"])] = card
+    if len(data) > 50:  # keep the most recent 50 cards
+        for key in list(data)[:-50]:
+            data.pop(key, None)
+    _write_json_atomic(_cards_path(), data)
+
+
+def _lanes_module():
+    try:
+        from . import lanes as _ln
+    except ImportError:
+        import lanes as _ln  # type: ignore
+    return _ln
+
+
+def _task_lookup() -> dict[str, dict]:
+    """Every task the engine can fight: new pool + legacy suite (lane-normalised)."""
+    try:
+        ln = _lanes_module()
+        pool = dict(ln.load_task_pool())
+        legacy_lanes = dict(getattr(ln, "LEGACY_LANES", {}))
+    except Exception:
+        pool, legacy_lanes = {}, {}
+    try:
+        suite = _load_suite()
+    except Exception:
+        suite = {"tasks": {}}
+    for tid, task in suite["tasks"].items():
+        pool.setdefault(tid, dict(task))
+    for tid, task in pool.items():
+        if not task.get("lane"):
+            task["lane"] = legacy_lanes.get(str(tid).upper())
+        task.setdefault("difficulty", 2)
+    return pool
+
+
+def _coerce_seed(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_card(value):
+    """Resolve a card argument: stored card id, scouted card object, or a spec.
+
+    Returns ``(card, error)``. ``None`` card means "no card given" (legacy
+    suite); an error string means the caller asked for a card we cannot find.
+    """
+    if value is None or value == "":
+        return None, None
+    if isinstance(value, str):
+        cid = value.strip()
+        if cid.startswith("{"):
+            try:
+                return _coerce_card(json.loads(cid))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        data = _read_json_file(_cards_path(), {})
+        card = data.get(cid) if isinstance(data, dict) else None
+        if isinstance(card, dict) and card.get("rounds"):
+            return card, None
+        return None, f"fight card {cid!r} not found (call kombat_scout to build and store one)."
+    if isinstance(value, dict):
+        nested = value.get("card")
+        if isinstance(nested, dict):
+            return _coerce_card(nested)
+        if isinstance(nested, str) and not value.get("rounds"):
+            return _coerce_card(nested)
+        if isinstance(value.get("rounds"), list) and value["rounds"]:
+            return value, None
+        if isinstance(value.get("id"), str) and not value.get("lanes"):
+            return _coerce_card(value["id"])
+        lanes_spec = value.get("lanes")
+        if isinstance(lanes_spec, (list, dict)):
+            try:
+                card = _lanes_module().build_card(
+                    lanes_spec,
+                    _coerce_seed(value.get("seed"), 0),
+                    extra_tasks=value.get("project_tasks") if isinstance(value.get("project_tasks"), list) else None,
+                )
+            except Exception as exc:  # noqa: BLE001 — bad card spec degrades
+                return None, f"could not build card from given lanes: {exc}"
+            _store_card(card)
+            return card, None
+    return None, "card must be a card object from kombat_scout, {\"lanes\": [...]}, or a stored card id."
+
+
+def _plan_from_card(card: dict) -> dict:
+    rounds = []
+    for idx, rnd in enumerate(card.get("rounds") or []):
+        if not isinstance(rnd, dict):
+            continue
+        raw_ids = rnd.get("tasks") or []
+        ids = [str(t) for t in raw_ids if isinstance(t, (str, int))]
+        try:
+            points = int(rnd.get("points", 1))
+        except (TypeError, ValueError):
+            points = 1
+        rounds.append(
+            {
+                "id": str(rnd.get("id") or f"R{idx + 1}"),
+                "name": str(rnd.get("name") or "Round"),
+                "points": points,
+                "tasks": ids,
+                "card": rnd,
+            }
+        )
+    return {
+        "mode": "card",
+        "card": card,
+        "rounds": rounds,
+        "sudden_death_task": card.get("sudden_death_task"),
+    }
+
+
+def _plan_from_suite(suite: dict, order: list[str] | None = None) -> dict:
+    rounds = []
+    selected = set(order or [])
+    for rnd in suite.get("rounds") or []:
+        ids = [str(t) for t in (rnd.get("tasks") or [])]
+        if order is not None:
+            ids = [t for t in ids if t in selected]
+        if not ids:
+            continue
+        rounds.append(
+            {
+                "id": str(rnd.get("id") or "R"),
+                "name": str(rnd.get("name") or "Round"),
+                "points": int(rnd.get("points", 1) or 1),
+                "tasks": ids,
+                "card": None,
+            }
+        )
+    return {
+        "mode": "legacy",
+        "card": None,
+        "rounds": rounds,
+        "sudden_death_task": suite.get("sudden_death_task"),
+    }
+
+
+def _fight_plan(args: dict, suite: dict) -> tuple[dict | None, str | None]:
+    """Resolve args["card"] (object/spec/id) or fall back to the legacy suite."""
+    card_arg = args.get("card")
+    if card_arg is None and isinstance(args.get("input"), dict):
+        card_arg = args["input"].get("card")
+    card, err = _coerce_card(card_arg)
+    if err:
+        return None, err
+    if card:
+        plan = _plan_from_card(card)
+        if not any(rnd["tasks"] for rnd in plan["rounds"]):
+            return None, "fight card has no task ids."
+        wanted = args.get("tasks")
+        if wanted:
+            wanted_set = {str(w) for w in wanted}
+            for rnd in plan["rounds"]:
+                rnd["tasks"] = [t for t in rnd["tasks"] if t in wanted_set]
+            plan["rounds"] = [r for r in plan["rounds"] if r["tasks"]]
+            if not plan["rounds"]:
+                return None, "No matching tasks in the card."
+        return plan, None
+
+    wanted = args.get("tasks")
+    order = None
+    if wanted:
+        wanted_set = {str(w).upper() for w in wanted}
+        order = [t for t in suite["order"] if t in wanted_set]
+        if not order:
+            return None, "No matching tasks. Call kombat_list_tasks for valid IDs."
+    return _plan_from_suite(suite, order), None
+
+
+# --------------------------------------------------- rate limit + retries
+
+_RATE_LIMIT_RE = re.compile(
+    r"\b429\b|rate[\s_-]?limit|too many requests|overloaded|throttl|quota|capacity|try again later",
+    re.I,
+)
+_RETRY_AFTER_RES = (
+    re.compile(r"retry[\s_-]?after[\"']?\s*[:=]?\s*[\"']?(\d+(?:\.\d+)?)", re.I),
+    re.compile(r"try again in\s+(\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?", re.I),
+    re.compile(r"(\d+(?:\.\d+)?)\s*(?:s|sec|seconds?)\s+(?:before|until)\s+(?:retry|the next)", re.I),
+)
+
+
+def _as_float(value) -> float | None:
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_from_any(value) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    num = _as_float(value)
+    if num is not None:
+        return num
+    if isinstance(value, str):
+        for pattern in _RETRY_AFTER_RES:
+            m = pattern.search(value)
+            if m:
+                return _as_float(m.group(1))
+    return None
+
+
+def _retry_after_from_text(text: str) -> float | None:
+    if not text:
+        return None
+    for pattern in _RETRY_AFTER_RES:
+        m = pattern.search(text)
+        if m:
+            return _as_float(m.group(1))
+    return None
+
+
+def _detect_rate_limit(exc: Exception) -> tuple[bool, float | None]:
+    """Return (is_rate_limit, retry_after_seconds) for a provider exception."""
+    retry_after = None
+    for attr in ("retry_after", "retry_after_s", "retry_after_seconds", "retryAfter"):
+        if hasattr(exc, attr):
+            val = getattr(exc, attr, None)
+            retry_after = retry_after or _float_from_any(val)
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    headers = getattr(exc, "headers", None)
+    response = getattr(exc, "response", None)
+
+    header_map = {}
+    for holder in (headers, getattr(response, "headers", None)):
+        if holder is None:
+            continue
+        try:
+            items = holder.items() if hasattr(holder, "items") else []
+            header_map.update({str(k).lower(): v for k, v in items})
+        except Exception:  # noqa: BLE001 — weird header objects
+            pass
+    for key in ("retry-after", "retry_after", "x-ratelimit-reset-after"):
+        if key in header_map:
+            retry_after = retry_after or _float_from_any(header_map[key])
+
+    if response is not None and status is None:
+        status = getattr(response, "status_code", None)
+        try:
+            payload = response.json()
+        except Exception:  # noqa: BLE001 — non-JSON body
+            payload = None
+        if isinstance(payload, dict):
+            candidates = [payload.get("retry_after"), payload.get("retryAfter")]
+            error_obj = payload.get("error")
+            if isinstance(error_obj, dict):
+                candidates.append(error_obj.get("retry_after"))
+            for candidate in candidates:
+                val = _float_from_any(candidate)
+                if val is not None:
+                    retry_after = retry_after or val
+                    break
+
+    text = f"{type(exc).__name__}: {exc}"
+    body = getattr(exc, "body", None)
+    if isinstance(body, (str, dict)):
+        text += " " + (body if isinstance(body, str) else json.dumps(body, default=str))
+    retry_after = retry_after or _retry_after_from_text(text)
+
+    is_rate = False
+    try:
+        is_rate = int(status) == 429 if status is not None else False
+    except (TypeError, ValueError):
+        is_rate = False
+    if not is_rate:
+        is_rate = bool(_RATE_LIMIT_RE.search(text))
+    return is_rate, retry_after
+
+
+def _wait_state(budget_s: float) -> dict:
+    return {"budget": max(0.0, float(budget_s)), "waited": 0.0}
+
+
+def _sleep_wait(seconds: float, state: dict) -> float:
+    """Sleep at most the remaining per-fight wait budget; return slept seconds."""
+    try:
+        remaining = max(0.0, state["budget"] - state["waited"])
+    except Exception:
+        remaining = 0.0
+    wait = max(0.0, min(float(seconds), remaining))
+    if wait <= 0:
+        return 0.0
+    time.sleep(wait)
+    state["waited"] += wait
+    return wait
+
+
+def _complete_with_retry(
+    ctx,
+    fighter: str,
+    prompt: str,
+    temperature: float,
+    max_tokens: int,
+    timeout_s: float,
+    *,
+    max_attempts: int = 3,
+    max_rate_wait_s: float = 120.0,
+    wait_state: dict | None = None,
+    pace_ms: float = 0.0,
+):
+    """Call one model with 429-aware waiting, jittered backoff, bounded tries.
+
+    PermissionError (the trust gate) is re-raised immediately — never retried.
+    Returns ``(text, usage, attempts, error, waited_s)``.
+    """
+    system = (
+        "You are a fighter in a model benchmark. Answer the task exactly as written, "
+        "following every format constraint. Do not add commentary about the benchmark."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
+    state = wait_state if isinstance(wait_state, dict) else _wait_state(240.0)
+    waited = 0.0
+    last_exc = None
+    attempts = 0
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        attempts = attempt
+        try:
+            result = ctx.llm.complete(
+                messages,
+                model=fighter,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout_s,
+                purpose="model-kombat fight",
+            )
+            text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
+            return str(text or ""), _usage_of(result), attempt, None, waited
+        except PermissionError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — provider errors are data, not crashes
+            last_exc = exc
+            is_rate, retry_after = _detect_rate_limit(exc)
+            if is_rate:
+                want = retry_after if retry_after is not None else 8.0
+                wait = min(float(want), float(max_rate_wait_s))
+            else:
+                base = min(30.0, 1.5 * (2 ** (attempt - 1)))
+                wait = base * random.uniform(0.75, 1.25)
+            if attempt >= max_attempts:
+                break
+            slept = _sleep_wait(wait, state)
+            waited += slept
+            if slept <= 0:
+                break  # wait budget exhausted: report errored, never failed
+    return "", {}, attempts, str(last_exc), waited
 
 
 def score_check(check: dict, answer: str, allow_exec: bool = False) -> dict:
@@ -349,6 +739,7 @@ def kombat_scout(args: dict, **kwargs) -> str:
         card = _ln.build_card(classified, seed, extra_tasks=extra if isinstance(extra, list) else None)
     except Exception as exc:
         return _err(f"failed to build fight card: {type(exc).__name__}: {exc}")
+    _store_card(card)
 
     reasons = [
         "classified lanes: "
@@ -396,34 +787,123 @@ def _usage_of(result) -> dict:
     return out
 
 
-def _complete_with_retry(ctx, fighter: str, prompt: str, temperature: float, max_tokens: int, timeout_s: float):
-    """One retry on transient errors; PermissionError (trust gate) never retries."""
-    system = (
-        "You are a fighter in a model benchmark. Answer the task exactly as written, "
-        "following every format constraint. Do not add commentary about the benchmark."
-    )
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": prompt},
-    ]
-    last_exc = None
-    for attempt in (1, 2):
+def _live_state(data_dir, fight_id, card, fighters, task_rounds=None):
+    """Best-effort live.json writer (lazy import: missing module never breaks a fight).
+
+    Accepts either the frozen contract ``LiveState(data_dir, fight_id, card,
+    fighters)`` or the richer in-repo API (keyword fighters/fight_id) by
+    inspecting the constructor.
+    """
+    try:
         try:
-            result = ctx.llm.complete(
-                messages,
-                model=fighter,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout_s,
-                purpose="model-kombat fight",
+            from . import live as _live
+        except ImportError:
+            import live as _live  # type: ignore
+        cls = _live.LiveState
+        try:
+            import inspect
+
+            params = set(inspect.signature(cls.__init__).parameters)
+        except Exception:  # noqa: BLE001
+            params = set()
+        if "fighter_a" in params:
+            kwargs = {}
+            if "broadcast" in params:
+                kwargs["broadcast"] = bool(_CTX is not None and hasattr(_CTX, "spawn_task"))
+            state = cls(
+                data_dir,
+                card=card,
+                fighter_a=(fighters or {}).get("a"),
+                fighter_b=(fighters or {}).get("b"),
+                fight_id=fight_id,
+                **kwargs,
             )
-            text = result.get("text", "") if isinstance(result, dict) else getattr(result, "text", "")
-            return str(text or ""), _usage_of(result), attempt, None
-        except PermissionError:
-            raise
-        except Exception as exc:  # transient provider error — retry once
-            last_exc = exc
-    return "", {}, 2, str(last_exc)
+        else:
+            state = cls(data_dir, fight_id, card, fighters)
+        return _LiveAdapter(state, task_rounds or {}, fighters or {})
+    except Exception:
+        return None
+
+
+class _LiveAdapter:
+    """Normalise the frozen LiveState method names onto whatever live.py offers."""
+
+    def __init__(self, state, task_rounds: dict, fighters: dict):
+        self.state = state
+        self.task_rounds = task_rounds or {}
+        self.fighters = fighters or {}
+
+    def round_state(self, round_id, status):
+        st = self.state
+        if hasattr(st, "round_state"):
+            return st.round_state(round_id, status)
+        try:
+            if status == "fighting" and hasattr(st, "set_status") and getattr(st, "status", "") in ("idle", ""):
+                st.set_status("fighting")
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def task_update(self, task_id, side, **fields):
+        st = self.state
+        if hasattr(st, "task_update"):
+            return st.task_update(task_id, side, **fields)
+        round_id = self.task_rounds.get(task_id)
+        if hasattr(st, "update_task"):
+            return st.update_task(round_id, task_id, side, **fields)
+        if hasattr(st, "apply_task_result"):
+            return st.apply_task_result(round_id, task_id, side, fields)
+        return None
+
+    def finish(self, winner, ko, points, usage, report_path):
+        st = self.state
+        if hasattr(st, "add_usage"):
+            for side in ("a", "b"):
+                fighter = self.fighters.get(side)
+                u = (usage or {}).get(fighter) if isinstance(usage, dict) else None
+                if isinstance(u, dict):
+                    try:
+                        st.add_usage(
+                            side,
+                            cost_usd=float(u.get("cost_usd") or 0.0),
+                            tokens=int(u.get("tokens") or 0),
+                            latency_s=float(u.get("latency_s") or 0.0),
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+        try:
+            return st.finish(winner=winner, ko=ko, report_path=report_path)
+        except TypeError:
+            return st.finish(winner, ko, points, usage, report_path)
+
+    def error(self, message):
+        st = self.state
+        if hasattr(st, "error"):
+            return st.error(message)
+        if hasattr(st, "fail"):
+            return st.fail(message)
+        return None
+
+
+def _live_call(live_state, method: str, *args, **kwargs) -> None:
+    if live_state is None:
+        return
+    try:
+        getattr(live_state, method)(*args, **kwargs)
+    except Exception:  # noqa: BLE001 — live state is best-effort
+        pass
+
+
+def _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko) -> str:
+    """Prefer arcade-artist's render module; fall back to the built-in renderer."""
+    try:
+        try:
+            from . import render as _render
+        except ImportError:
+            import render as _render  # type: ignore
+        return _render.render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko)
+    except Exception:  # noqa: BLE001 — missing/broken renderer falls back
+        return _render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko)
 
 
 @_guard
@@ -443,30 +923,70 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
     except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
 
-    wanted = args.get("tasks")
-    if wanted:
-        wanted = {str(w).upper() for w in wanted}
-        order = [t for t in suite["order"] if t in wanted]
-    else:
-        order = list(suite["order"])
-    if not order:
-        return _err("No matching tasks. Call kombat_list_tasks for valid IDs.")
+    plan, plan_err = _fight_plan(args, suite)
+    if plan_err:
+        return _err(plan_err)
+
+    tasks_by_id = _task_lookup()
+    referenced = {tid for rnd in plan["rounds"] for tid in rnd["tasks"]}
+    if plan.get("sudden_death_task"):
+        referenced.add(str(plan["sudden_death_task"]))
+    missing = sorted(tid for tid in referenced if tid not in tasks_by_id)
+    if missing:
+        return _err(f"Fight card references unknown task(s): {', '.join(missing)}.")
 
     try:
         temperature = float(args.get("temperature", _cfg("temperature", 0)))
         max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
         budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
         timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
+        pace_ms = float(args.get("pace_ms", _cfg("pace_ms", 0)) or 0)
+        max_rate_wait_s = float(args.get("max_rate_wait_s", _cfg("max_rate_wait_s", 120)) or 0)
+        wait_budget_s = float(args.get("rate_wait_budget_s", _cfg("rate_wait_budget_s", 240)) or 0)
+        auto_rematch_cfg = args.get("auto_rematch")
+        if auto_rematch_cfg is None:
+            auto_rematch_cfg = _cfg("auto_rematch", True)
+        auto_rematch = bool(auto_rematch_cfg)
+        rematch_passes = max(0, min(2, int(args.get("max_rematch_passes", 2))))
     except (TypeError, ValueError):
-        return _err("temperature/max_tokens/budget_usd/timeout_s must be numbers.")
+        return _err("temperature/max_tokens/budget_usd/timeout_s/pace_ms must be numbers.")
 
-    # Kanban scoreboard (display only; never fails the fight).
+    fight_id = str(args.get("fight_id") or datetime.now().strftime("%Y%m%d-%H%M%S"))
+    pace_s = max(0.0, pace_ms) / 1000.0
+    wait_state = _wait_state(wait_budget_s)
+    card = plan.get("card")
+
+    live_card = card or {
+        "title": "Model Kombat fixed suite",
+        "lanes": [],
+        "rounds": [
+            {"id": r["id"], "name": r["name"], "points": r["points"], "tasks": r["tasks"]}
+            for r in plan["rounds"]
+        ],
+        "sudden_death_task": plan.get("sudden_death_task"),
+    }
+    live_rounds = {tid: r["id"] for r in plan["rounds"] for tid in r["tasks"]}
+    if plan.get("sudden_death_task"):
+        live_rounds.setdefault(str(plan["sudden_death_task"]), "SD")
+    live = _live_state(
+        _data_dir(), fight_id, live_card,
+        {"a": fighter_a, "b": fighter_b}, live_rounds,
+    )
+
+    # Kanban scoreboard (display only; never fails the fight). Rounds come from
+    # the fight card when there is one, so cards track the adaptive card.
     board = None
     if bool(_cfg("show_on_kanban", True)):
         try:
             from . import kanban as _kb
 
-            board = _kb.Scoreboard(fighter_a, fighter_b, suite)
+            board_suite = {
+                "rounds": [
+                    {"id": r["id"], "name": r["name"], "points": r["points"], "tasks": r["tasks"]}
+                    for r in plan["rounds"]
+                ]
+            }
+            board = _kb.Scoreboard(fighter_a, fighter_b, board_suite, card=card)
             board.start()
         except Exception:
             board = None
@@ -474,54 +994,119 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
     answers: dict[str, dict[str, str]] = {fighter_a: {}, fighter_b: {}}
     meta: dict[str, dict[str, dict]] = {fighter_a: {}, fighter_b: {}}
     errors: list[dict] = []
-    totals = {fighter_a: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0},
-              fighter_b: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0}}
+    totals = {
+        fighter_a: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0, "waited_s": 0.0},
+        fighter_b: {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0, "waited_s": 0.0},
+    }
     budget_exceeded = False
 
-    for tid in order:
-        task = suite["tasks"][tid]
-        round_id = next((r["id"] for r in suite["rounds"] if tid in r["tasks"]), None)
+    def call_pair(tid: str, fighter: str) -> None:
+        """One (task, fighter) call; updates answers/meta/totals/live. Raises PermissionError."""
+        nonlocal budget_exceeded
+        task = tasks_by_id[tid]
+        side = "a" if fighter == fighter_a else "b"
+        if pace_s:
+            time.sleep(pace_s)
+        started = time.perf_counter()
+        text, usage, attempts, err, waited = _complete_with_retry(
+            _CTX, fighter, task["prompt"], temperature, max_tokens, timeout_s,
+            max_attempts=int(args.get("max_attempts", 3) or 3),
+            max_rate_wait_s=max_rate_wait_s,
+            wait_state=wait_state,
+        )
+        latency = round(time.perf_counter() - started, 3)
+        answers[fighter][tid] = text
+        meta[fighter][tid] = {
+            "latency_s": latency,
+            "usage": usage,
+            "attempts": attempts,
+            "waited_s": waited,
+            "error": err,
+            "status": "errored" if err else "scored",
+        }
+        totals[fighter]["latency_s"] += latency
+        totals[fighter]["waited_s"] += waited
+        totals[fighter]["tokens"] += int(usage.get("total_tokens") or usage.get("output_tokens") or 0)
+        totals[fighter]["cost_usd"] += float(usage.get("cost_usd") or 0.0)
+        _live_call(
+            live, "task_update", tid, side,
+            state="error" if err else "done",
+            score=None,
+            latency_s=latency,
+            cost_usd=float(usage.get("cost_usd") or 0.0),
+            detail=(err or "")[:400],
+        )
+        if err:
+            errors.append({"task": tid, "fighter": fighter, "error": err})
+        if totals[fighter]["cost_usd"] > budget:
+            budget_exceeded = True
+
+    for rnd in plan["rounds"]:
+        _live_call(live, "round_state", rnd["id"], "fighting")
         if board is not None:
-            board.round_fighting(round_id)
-        for fighter in (fighter_a, fighter_b):
-            started = time.perf_counter()
-            try:
-                text, usage, attempts, err = _complete_with_retry(
-                    _CTX, fighter, task["prompt"], temperature, max_tokens, timeout_s
-                )
-            except PermissionError as exc:
-                if board is not None:
-                    board.abort()
-                return _err(
-                    f"Host refused the model override: {exc}. "
-                    "Enable it in config.yaml: plugins.entries.model-kombat.llm."
-                    "allow_model_override: true (optionally restrict with allowed_models), "
-                    "then retry the fight. Nothing was sent.",
-                    partial={"answers_a": answers[fighter_a], "answers_b": answers[fighter_b]},
-                )
-            latency = round(time.perf_counter() - started, 3)
-            answers[fighter][tid] = text
-            meta[fighter][tid] = {
-                "latency_s": latency,
-                "usage": usage,
-                "attempts": attempts,
-                "error": err,
-            }
-            totals[fighter]["latency_s"] += latency
-            totals[fighter]["tokens"] += int(usage.get("total_tokens") or usage.get("output_tokens") or 0)
-            totals[fighter]["cost_usd"] += float(usage.get("cost_usd") or 0.0)
-            if err:
-                errors.append({"task": tid, "fighter": fighter, "error": err})
-            if totals[fighter]["cost_usd"] > budget:
-                budget_exceeded = True
+            board.round_fighting(rnd["id"])
+        for tid in rnd["tasks"]:
+            _live_call(live, "task_update", tid, "a", state="fighting")
+            _live_call(live, "task_update", tid, "b", state="fighting")
+            for fighter in (fighter_a, fighter_b):
+                try:
+                    call_pair(tid, fighter)
+                except PermissionError as exc:
+                    _live_call(live, "error", f"host refused model override: {exc}")
+                    if board is not None:
+                        board.abort()
+                    return _err(
+                        f"Host refused the model override: {exc}. "
+                        "Enable it in config.yaml: plugins.entries.model-kombat.llm."
+                        "allow_model_override: true (optionally restrict with allowed_models), "
+                        "then retry the fight. Nothing was sent.",
+                        partial={"answers_a": answers[fighter_a], "answers_b": answers[fighter_b]},
+                    )
+                if budget_exceeded:
+                    break
+            if budget_exceeded:
                 break
         if budget_exceeded:
             break
 
+    # Bounded auto-rematch of errored (task, fighter) pairs inside this fight.
+    rematch_passes_done = 0
+    if auto_rematch and errors and not budget_exceeded:
+        for pass_no in range(1, rematch_passes + 1):
+            if not errors or budget_exceeded:
+                break
+            rematch_passes_done = pass_no
+            prior = list(errors)
+            errors = []
+            for entry in prior:
+                tid = entry.get("task")
+                fighter = entry.get("fighter")
+                if tid not in tasks_by_id or fighter not in (fighter_a, fighter_b):
+                    errors.append(entry)
+                    continue
+                try:
+                    call_pair(tid, fighter)
+                except PermissionError as exc:
+                    _live_call(live, "error", f"host refused model override: {exc}")
+                    if board is not None:
+                        board.abort()
+                    return _err(f"Host refused the model override during auto-rematch: {exc}.")
+                if not meta.get(fighter, {}).get(tid, {}).get("error"):
+                    continue  # recovered — drop the error
+                errors.append({**entry, "pass": pass_no})
+                if budget_exceeded:
+                    break
+            if not errors:
+                break
+
     fight = {
+        "fight_id": fight_id,
         "fighter_a": fighter_a,
         "fighter_b": fighter_b,
         "mode": "pure",
+        "card": card,
+        "plan_rounds": plan["rounds"],
+        "sudden_death_task": plan.get("sudden_death_task"),
         "answers_a": answers[fighter_a],
         "answers_b": answers[fighter_b],
         "meta_a": meta[fighter_a],
@@ -530,6 +1115,8 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         "usage": totals,
         "budget_exceeded": budget_exceeded,
         "kanban": board.ids if board is not None else None,
+        "rematch_passes": rematch_passes_done,
+        "waited_s": {fighter: totals[fighter]["waited_s"] for fighter in totals},
     }
     try:
         if hasattr(_CTX, "state"):
@@ -538,8 +1125,11 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         pass
 
     return _ok(
+        fight_id=fight_id,
         fighters=[fighter_a, fighter_b],
-        rounds=[t for t in order],
+        card=card,
+        mode=plan["mode"],
+        rounds=[tid for rnd in plan["rounds"] for tid in rnd["tasks"]],
         answers_a=answers[fighter_a],
         answers_b=answers[fighter_b],
         meta_a=meta[fighter_a],
@@ -547,6 +1137,9 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         errors=errors,
         usage=totals,
         budget_exceeded=budget_exceeded,
+        rematch_passes=rematch_passes_done,
+        waited_s=fight["waited_s"],
+        live=live is not None,
         kanban=board.ids if board is not None else None,
         kanban_errors=board.errors if board is not None else [],
     )
@@ -581,12 +1174,16 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
         suite = _load_suite()
     except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
+    tasks_by_id = _task_lookup()
 
     try:
         temperature = float(args.get("temperature", _cfg("temperature", 0)))
         max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
         budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
         timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
+        pace_ms = float(args.get("pace_ms", _cfg("pace_ms", 0)) or 0)
+        max_rate_wait_s = float(args.get("max_rate_wait_s", _cfg("max_rate_wait_s", 120)) or 0)
+        wait_state = _wait_state(float(args.get("rate_wait_budget_s", _cfg("rate_wait_budget_s", 240)) or 0))
     except (TypeError, ValueError):
         return _err("temperature/max_tokens/budget_usd/timeout_s must be numbers.")
 
@@ -601,12 +1198,15 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
 
     for err in errors:
         tid, fighter = err.get("task"), err.get("fighter")
-        if tid not in suite["tasks"] or fighter not in fighters:
+        if tid not in tasks_by_id or fighter not in fighters:
             still_failing.append(err)
             continue
+        if pace_ms > 0:
+            time.sleep(pace_ms / 1000.0)
         try:
-            text, call_usage, attempts, call_err = _complete_with_retry(
-                _CTX, fighter, suite["tasks"][tid]["prompt"], temperature, max_tokens, timeout_s
+            text, call_usage, attempts, call_err, call_waited = _complete_with_retry(
+                _CTX, fighter, tasks_by_id[tid]["prompt"], temperature, max_tokens, timeout_s,
+                max_rate_wait_s=max_rate_wait_s, wait_state=wait_state,
             )
         except PermissionError as exc:
             return _err(
@@ -623,6 +1223,7 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
             answers[fighter][tid] = text
             meta[fighter][tid] = {"error": None, "attempts": attempts, "latency_s": 0, "usage": call_usage}
         slot = usage.setdefault(fighter, {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0})
+        slot["waited_s"] = round(float(slot.get("waited_s") or 0.0) + float(call_waited or 0.0), 3)
         slot["cost_usd"] = float(slot.get("cost_usd") or 0.0) + float(call_usage.get("cost_usd") or 0.0)
         slot["tokens"] = int(slot.get("tokens") or 0) + int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
         if spend > budget:
@@ -655,11 +1256,14 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
             affected = sorted(
                 {
                     r["id"]
-                    for r in suite["rounds"]
+                    for r in (last.get("plan_rounds") or suite["rounds"])
                     if any(t in {e.get("task") for e in errors} for t in r["tasks"])
                 }
             )
-            board = _kb.Scoreboard(fighters[0], fighters[1], suite)
+            board = _kb.Scoreboard(
+                fighters[0], fighters[1],
+                {"rounds": last.get("plan_rounds") or suite["rounds"]},
+            )
             board.start(round_ids=affected or None, title_prefix="REMATCH")
             if board.ids.get("parent"):
                 board._run(
@@ -989,6 +1593,55 @@ def _append_history(record: dict) -> None:
         pass
 
 
+def _ladder_module():
+    try:
+        from . import ladder as _ladder
+    except ImportError:
+        import ladder as _ladder  # type: ignore
+    return _ladder
+
+
+def _score_task_side(task: dict, answer: str, allow_exec: bool) -> dict:
+    """Score one answer: new check-spec tasks via engine_checks, legacy via scorers."""
+    check = task.get("check")
+    if isinstance(check, dict):
+        result = score_check(check, answer, allow_exec)
+        status = str(result.get("status") or "")
+        if status not in ("scored", "skipped", "errored"):
+            status = "scored" if result.get("score") is not None else "errored"
+        frac = float(result["score"]) if status == "scored" and result.get("score") is not None else None
+        return {
+            "score": frac if frac is not None else 0.0,
+            "max": 1,
+            "passed": bool(frac is not None and frac >= 1.0),
+            "details": [str(result.get("detail") or "")],
+            "status": status,
+            "fraction": frac,
+        }
+    result = _score_one(task.get("scorer", ""), answer, task, allow_exec)
+    status = "skipped" if result.get("skipped") else ("errored" if result.get("errored") else "scored")
+    frac = _fraction(result) if status == "scored" else None
+    return {**result, "status": status, "fraction": frac}
+
+
+def _meta_detail(meta: dict, tid: str) -> dict:
+    item = (meta or {}).get(tid) or {}
+    usage = item.get("usage") if isinstance(item.get("usage"), dict) else {}
+    return {
+        "latency_s": float(item.get("latency_s") or 0.0),
+        "cost_usd": float(usage.get("cost_usd") or 0.0),
+        "attempts": item.get("attempts"),
+        "waited_s": float(item.get("waited_s") or 0.0),
+    }
+
+
+def _r3_round(rounds_out: list[dict]) -> dict | None:
+    for rnd in rounds_out:
+        if rnd.get("id") == "R3":
+            return rnd
+    return None
+
+
 @_guard
 def kombat_score_answers(args: dict, **kwargs) -> str:
     fighter_a = str(args.get("fighter_a") or "Fighter A").strip()
@@ -1002,69 +1655,180 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         allow_exec = bool(_cfg("allow_code_execution", False))
     render = args.get("render_report", True)
     usage = args.get("usage") or {}
-    errors_a = set(args.get("errors_a") or [])
-    errors_b = set(args.get("errors_b") or [])
+    if not isinstance(usage, dict):
+        usage = {}
+    errors_a = {str(e) for e in (args.get("errors_a") or [])}
+    errors_b = {str(e) for e in (args.get("errors_b") or [])}
+    meta_a = args.get("meta_a") if isinstance(args.get("meta_a"), dict) else {}
+    meta_b = args.get("meta_b") if isinstance(args.get("meta_b"), dict) else {}
 
     try:
         suite = _load_suite()
     except Exception as exc:
         return _err(f"Failed to load task suite: {exc}")
 
-    rounds_out = []
+    # The card can come from the args or the stored last fight (the /kombat score flow).
+    card_arg = args.get("card")
+    last = None
+    if _CTX is not None and hasattr(_CTX, "state"):
+        try:
+            last = _CTX.state.get("last_fight", default=None)
+        except Exception:
+            last = None
+    if card_arg is None and isinstance(last, dict):
+        last_card = last.get("card")
+        if isinstance(last_card, dict) and last_card.get("rounds"):
+            card_ids = {
+                str(tid)
+                for rnd in last_card.get("rounds") or []
+                for tid in (rnd.get("tasks") or [])
+            }
+            if str(last_card.get("sudden_death_task")):
+                card_ids.add(str(last_card["sudden_death_task"]))
+            answered = {str(t) for t in answers_a} | {str(t) for t in answers_b}
+            if not answered or answered <= card_ids:
+                card_arg = last_card
+    plan, plan_err = _fight_plan({"card": card_arg} if card_arg is not None else {}, suite)
+    if plan_err:
+        return _err(plan_err)
+    tasks_by_id = _task_lookup()
+    fight_id = str(args.get("fight_id") or (last or {}).get("fight_id") or datetime.now().strftime("%Y%m%d-%H%M%S"))
+    if usage is None or not usage:
+        usage = (last or {}).get("usage") or {}
+
+    rounds_out: list[dict] = []
     points = {fighter_a: 0.0, fighter_b: 0.0}
-    ko_rounds = []
+    ko_rounds: list[str] = []
+    incomplete_rounds: list[str] = []
 
-    def score_task(tid, weight):
-        task = suite["tasks"][tid]
-        sa = _score_one(task["scorer"], str(answers_a.get(tid, "")), task, allow_exec)
-        sb = _score_one(task["scorer"], str(answers_b.get(tid, "")), task, allow_exec)
-        excluded = None
-        if tid in errors_a or tid in errors_b:
-            excluded = "errored"
-            if tid in errors_a:
-                sa = {**sa, "errored": True}
-            if tid in errors_b:
-                sb = {**sb, "errored": True}
-        elif sa.get("skipped") or sb.get("skipped"):
-            excluded = "skipped (code execution off)"
-        ko = bool(
-            task["scorer"] in ("code_exec", "debug_exec")
-            and not excluded
-            and sa.get("passed") != sb.get("passed")
-        )
-        fa, fb = _fraction(sa), _fraction(sb)
-        pa = pb = 0.0
-        if not excluded and fa is not None and fb is not None:
-            if fa > fb:
-                pa = float(weight)
-            elif fb > fa:
-                pb = float(weight)
+    for rnd in plan["rounds"]:
+        tasks_out: list[dict] = []
+        for tid in rnd["tasks"]:
+            if tid not in answers_a and tid not in answers_b:
+                continue
+            task = tasks_by_id.get(tid)
+            if not task:
+                continue
+            sa = _score_task_side(task, str(answers_a.get(tid, "")), allow_exec)
+            sb = _score_task_side(task, str(answers_b.get(tid, "")), allow_exec)
+            excluded = None
+            if tid in errors_a or tid in errors_b:
+                excluded = "errored"
+            elif sa["status"] == "skipped" or sb["status"] == "skipped":
+                excluded = "skipped (code execution off)"
+            elif sa["status"] == "errored" or sb["status"] == "errored":
+                excluded = "errored (check spec)"
+            fa = sa.get("fraction") if not excluded else None
+            fb = sb.get("fraction") if not excluded else None
+            tasks_out.append(
+                {
+                    "id": tid,
+                    "title": task.get("title") or tid,
+                    "lane": task.get("lane"),
+                    "scorer": task.get("scorer") or (task.get("check") or {}).get("type"),
+                    "check_type": (task.get("check") or {}).get("type") if isinstance(task.get("check"), dict) else None,
+                    "a": sa,
+                    "b": sb,
+                    "fraction_a": fa,
+                    "fraction_b": fb,
+                    "points_a": 0.0,
+                    "points_b": 0.0,
+                    "ko": False,
+                    "excluded": excluded,
+                    "status_a": sa.get("status"),
+                    "status_b": sb.get("status"),
+                }
+            )
+
+        if not tasks_out:
+            continue
+        included = [t for t in tasks_out if not t["excluded"]]
+        if not included:
+            incomplete_rounds.append(rnd["id"])
+
+        if plan["mode"] == "card":
+            # Round stake (1/2/3): the round goes to the higher summed score fraction.
+            sum_a = sum(t["fraction_a"] or 0.0 for t in included)
+            sum_b = sum(t["fraction_b"] or 0.0 for t in included)
+            stake = float(rnd["points"])
+            if not included:
+                wa = wb = 0.0
+            elif sum_a > sum_b:
+                wa, wb = stake, 0.0
+            elif sum_b > sum_a:
+                wa, wb = 0.0, stake
             else:
-                pa = pb = weight / 2
-        points[fighter_a] += pa
-        points[fighter_b] += pb
-        return {
-            "id": tid, "title": task["title"], "scorer": task["scorer"],
-            "a": sa, "b": sb, "points_a": pa, "points_b": pb,
-            "ko": ko, "excluded": excluded,
+                wa = wb = stake / 2.0
+            if included:
+                share_a = wa / len(included)
+                share_b = wb / len(included)
+                for t in included:
+                    t["points_a"] = round(share_a, 6)
+                    t["points_b"] = round(share_b, 6)
+        else:
+            # Legacy suite: every task is worth its round's points.
+            for t in included:
+                fa, fb = t["fraction_a"], t["fraction_b"]
+                if fa is None or fb is None:
+                    continue
+                if fa > fb:
+                    t["points_a"] = float(rnd["points"])
+                elif fb > fa:
+                    t["points_b"] = float(rnd["points"])
+                else:
+                    t["points_a"] = t["points_b"] = float(rnd["points"]) / 2.0
+                if t["scorer"] in ("code_exec", "debug_exec") and t["a"].get("passed") != t["b"].get("passed"):
+                    t["ko"] = True
+            wa = sum(t["points_a"] for t in tasks_out)
+            wb = sum(t["points_b"] for t in tasks_out)
+
+        points[fighter_a] += wa
+        points[fighter_b] += wb
+        ko_rounds.extend(t["id"] for t in tasks_out if t["ko"])
+        round_out = {
+            "id": rnd["id"],
+            "name": rnd["name"],
+            "points": rnd["points"],
+            "tasks": tasks_out,
+            "points_a": round(wa, 6),
+            "points_b": round(wb, 6),
+            "incomplete": not included,
         }
+        if not included:
+            round_out["name"] = rnd["name"] + " *"
+        rounds_out.append(round_out)
 
-    for rnd in suite["rounds"]:
-        tasks_out = [score_task(tid, rnd["points"]) for tid in rnd["tasks"]
-                     if tid in answers_a or tid in answers_b]
-        if tasks_out:
-            rounds_out.append({**rnd, "tasks": tasks_out})
-        ko_rounds.extend(t["id"] for t in tasks_out if t.get("ko"))
-
-    # Sudden death on a tie (only if the SD task was actually fought).
+    # Sudden death only on a points tie (and only if the SD task was fought).
     sd_winner = None
-    sd_id = suite["sudden_death_task"]
-    if sd_id and (sd_id in answers_a or sd_id in answers_b) and points[fighter_a] == points[fighter_b]:
-        sd = score_task(sd_id, 0)  # winner-takes-fight, no points
-        rounds_out.append({"id": "SD", "name": "Sudden Death", "points": 0, "tasks": [sd]})
-        fa, fb = _fraction(sd["a"]), _fraction(sd["b"])
-        if fa is not None and fb is not None and fa != fb:
-            sd_winner = fighter_a if fa > fb else fighter_b
+    sd_id = str(plan["sudden_death_task"]) if plan.get("sudden_death_task") else None
+    scored_ids = {t["id"] for rnd in rounds_out for t in rnd["tasks"]}
+    if sd_id and sd_id not in scored_ids and (sd_id in answers_a or sd_id in answers_b):
+        if round(points[fighter_a], 9) == round(points[fighter_b], 9):
+            task = tasks_by_id.get(sd_id)
+            if task:
+                sa = _score_task_side(task, str(answers_a.get(sd_id, "")), allow_exec)
+                sb = _score_task_side(task, str(answers_b.get(sd_id, "")), allow_exec)
+                excluded = None
+                if sd_id in errors_a or sd_id in errors_b:
+                    excluded = "errored"
+                elif sa["status"] == "skipped" or sb["status"] == "skipped":
+                    excluded = "skipped (code execution off)"
+                elif sa["status"] == "errored" or sb["status"] == "errored":
+                    excluded = "errored (check spec)"
+                fa = sa.get("fraction") if not excluded else None
+                fb = sb.get("fraction") if not excluded else None
+                sd = {
+                    "id": sd_id, "title": task.get("title") or sd_id, "lane": task.get("lane"),
+                    "scorer": task.get("scorer") or (task.get("check") or {}).get("type"),
+                    "check_type": (task.get("check") or {}).get("type") if isinstance(task.get("check"), dict) else None,
+                    "a": sa, "b": sb, "fraction_a": fa, "fraction_b": fb,
+                    "points_a": 0.0, "points_b": 0.0, "ko": False, "excluded": excluded,
+                    "status_a": sa.get("status"), "status_b": sb.get("status"),
+                }
+                rounds_out.append({"id": "SD", "name": "Sudden Death", "points": 0, "tasks": [sd],
+                                   "points_a": 0.0, "points_b": 0.0, "incomplete": excluded is not None})
+                if fa is not None and fb is not None and fa != fb:
+                    sd_winner = fighter_a if fa > fb else fighter_b
 
     if sd_winner:
         winner = sd_winner
@@ -1075,18 +1839,56 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
     else:
         winner = "draw"
 
-    # Championship K.O.: pass every R3 task while opponent fails one.
+    # Championship K.O.
     ko = False
-    r3 = next((r for r in rounds_out if r["id"] == "R3"), None)
+    r3 = _r3_round(rounds_out)
     if r3 and winner != "draw":
-        def r3_passes(key):
-            vals = [t[key].get("passed") for t in r3["tasks"] if not t.get("excluded")]
-            return bool(vals) and all(vals)
-        if r3_passes("a") and not r3_passes("b"):
-            winner, ko = fighter_a, True
-        elif r3_passes("b") and not r3_passes("a"):
-            winner, ko = fighter_b, True
+        included_r3 = [t for t in r3["tasks"] if not t["excluded"]]
+        if plan["mode"] == "card":
+            def wins_all(side: str) -> bool:
+                if not included_r3:
+                    return False
+                for t in included_r3:
+                    fa, fb = t["fraction_a"], t["fraction_b"]
+                    if fa is None or fb is None:
+                        return False
+                    if not (fa > fb if side == "a" else fb > fa):
+                        return False
+                return True
 
+            def fails_one(side: str) -> bool:
+                for t in included_r3:
+                    frac = t["fraction_a"] if side == "a" else t["fraction_b"]
+                    if frac is not None and frac < 1.0:
+                        return True
+                return False
+
+            ko_a = wins_all("a") and fails_one("b")
+            ko_b = wins_all("b") and fails_one("a")
+            if ko_a and not ko_b:
+                winner, ko = fighter_a, True
+            elif ko_b and not ko_a:
+                winner, ko = fighter_b, True
+        else:
+            def r3_passes(side: str) -> bool:
+                vals = [t[side].get("passed") for t in included_r3]
+                return bool(vals) and all(vals)
+            if r3_passes("a") and not r3_passes("b"):
+                winner, ko = fighter_a, True
+            elif r3_passes("b") and not r3_passes("a"):
+                winner, ko = fighter_b, True
+    if ko:
+        for t in (r3 or {}).get("tasks", []):
+            fa, fb = t["fraction_a"], t["fraction_b"]
+            if t["excluded"]:
+                continue
+            if winner == fighter_a and (fa or 0) > (fb or 0) and (fb or 0) < 1.0:
+                t["ko"] = True
+            elif winner == fighter_b and (fb or 0) > (fa or 0) and (fa or 0) < 1.0:
+                t["ko"] = True
+        ko_rounds = sorted({t["id"] for rnd in rounds_out for t in rnd["tasks"] if t["ko"]})
+
+    # Report (delegate to render.py with fallback).
     report_path = None
     if render:
         try:
@@ -1095,32 +1897,85 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             report_path = report_dir / f"kombat-{stamp}.html"
             report_path.write_text(
-                _render_report(fighter_a, fighter_b, rounds_out, usage, winner, ko),
+                _render_report_delegate(fighter_a, fighter_b, rounds_out, usage, winner, ko),
                 encoding="utf-8",
             )
             report_path = str(report_path)
         except Exception as exc:
             report_path = f"report render failed: {exc}"
 
+    # Live state: per-task scores + final result.
+    live_card = plan.get("card") or {
+        "title": "Model Kombat fixed suite",
+        "lanes": [],
+        "rounds": [
+            {"id": r["id"], "name": r["name"], "points": r["points"], "tasks": [t["id"] for t in r["tasks"]]}
+            for r in rounds_out
+        ],
+        "sudden_death_task": plan.get("sudden_death_task"),
+    }
+    live_rounds = {t["id"]: r["id"] for r in rounds_out for t in r["tasks"]}
+    live = _live_state(
+        _data_dir(), fight_id, live_card,
+        {"a": fighter_a, "b": fighter_b}, live_rounds,
+    )
+    for rnd in rounds_out:
+        for t in rnd["tasks"]:
+            for side, fighter, meta in (("a", fighter_a, meta_a), ("b", fighter_b, meta_b)):
+                info = _meta_detail(meta, t["id"])
+                if t.get("excluded"):
+                    state = "skipped" if str(t["excluded"]).startswith("skipped") else "error"
+                    score = None
+                else:
+                    status = t.get(f"status_{side}")
+                    state = "done" if status == "scored" else ("skipped" if status == "skipped" else "error")
+                    score = t.get(f"fraction_{side}")
+                _live_call(
+                    live, "task_update", t["id"], side,
+                    state=state,
+                    score=score,
+                    latency_s=info["latency_s"],
+                    cost_usd=info["cost_usd"],
+                    detail="; ".join(str(d) for d in t[side].get("details") or [])[:400],
+                )
+        _live_call(live, "round_state", rnd["id"], "done")
+
     record = {
         "ts": _now_iso(),
+        "fight_id": fight_id,
         "fighter_a": fighter_a,
         "fighter_b": fighter_b,
+        "mode": plan["mode"],
+        "card": plan.get("card"),
+        "lanes": (plan.get("card") or {}).get("lanes"),
         "winner": winner,
         "ko": ko,
+        "sudden_death_winner": sd_winner,
         "points": points,
         "usage": usage,
         "report": report_path,
+        "incomplete": bool(incomplete_rounds),
+        "incomplete_rounds": incomplete_rounds,
         "answers_a": answers_a,
         "answers_b": answers_b,
         "rounds": [
             {
                 "id": r["id"], "name": r["name"], "points": r["points"],
+                "points_a": r.get("points_a"), "points_b": r.get("points_b"),
+                "incomplete": r.get("incomplete", False),
                 "tasks": [
-                    {"id": t["id"], "a": t["a"]["score"], "a_max": t["a"]["max"],
-                     "b": t["b"]["score"], "b_max": t["b"]["max"],
-                     "points_a": t["points_a"], "points_b": t["points_b"],
-                     "ko": t["ko"], "excluded": t["excluded"]}
+                    {
+                        "id": t["id"], "title": t.get("title"), "lane": t.get("lane"),
+                        "scorer": t.get("scorer"),
+                        "a": t["a"]["score"], "a_max": t["a"]["max"],
+                        "b": t["b"]["score"], "b_max": t["b"]["max"],
+                        "a_fraction": t.get("fraction_a"), "b_fraction": t.get("fraction_b"),
+                        "a_status": t.get("status_a"), "b_status": t.get("status_b"),
+                        "a_detail": "; ".join(str(d) for d in t["a"].get("details") or []),
+                        "b_detail": "; ".join(str(d) for d in t["b"].get("details") or []),
+                        "points_a": t["points_a"], "points_b": t["points_b"],
+                        "ko": t["ko"], "excluded": t["excluded"],
+                    }
                     for t in r["tasks"]
                 ],
             }
@@ -1129,12 +1984,59 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
     }
     _append_history(record)
 
-    # Kanban scoreboard completion (best-effort, display only).
+    # Ladder: per-lane Elo bouts (lazy import so a missing module never breaks scoring).
+    ladder_result = None
+    ladder_error = None
+
+    def _ladder_status(t: dict, side: str) -> str:
+        if t.get("excluded"):
+            return "skipped" if str(t["excluded"]).startswith("skipped") else "errored"
+        return t.get(f"status_{side}") or "scored"
+
+    try:
+        ladder_record = {
+            "fight_id": fight_id,
+            "fighter_a": fighter_a,
+            "fighter_b": fighter_b,
+            "tasks": [
+                {
+                    "id": t["id"],
+                    "lane": t.get("lane"),
+                    "a": {
+                        "score": t.get("fraction_a"),
+                        "status": _ladder_status(t, "a"),
+                        "latency_s": _meta_detail(meta_a, t["id"])["latency_s"],
+                        "cost_usd": _meta_detail(meta_a, t["id"])["cost_usd"],
+                    },
+                    "b": {
+                        "score": t.get("fraction_b"),
+                        "status": _ladder_status(t, "b"),
+                        "latency_s": _meta_detail(meta_b, t["id"])["latency_s"],
+                        "cost_usd": _meta_detail(meta_b, t["id"])["cost_usd"],
+                    },
+                }
+                for rnd in rounds_out
+                for t in rnd["tasks"]
+            ],
+            "usage": {
+                fighter: {
+                    "cost_usd": float((u or {}).get("cost_usd") or 0.0),
+                    "tokens": int((u or {}).get("tokens") or 0),
+                    "latency_s": float((u or {}).get("latency_s") or 0.0),
+                }
+                for fighter, u in usage.items()
+                if isinstance(u, dict)
+            },
+        }
+        ladder_result = _ladder_module().update_ladder(_data_dir(), ladder_record)
+    except Exception as exc:  # noqa: BLE001 — ladder is additive, never fatal
+        ladder_error = f"{type(exc).__name__}: {exc}"
+
+    # Live finish + kanban completion (both best-effort).
+    _live_call(live, "finish", winner, ko, points, usage, report_path)
+
     kanban_note = None
     try:
-        last = None
-        if hasattr(_CTX, "state"):
-            last = _CTX.state.get("last_fight", default=None)
         if last and last.get("kanban") and bool(_cfg("show_on_kanban", True)):
             from . import kanban as _kb
 
@@ -1144,6 +2046,9 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
 
     return _ok(
         fighters=[fighter_a, fighter_b],
+        fight_id=fight_id,
+        mode=plan["mode"],
+        card=plan.get("card"),
         winner=winner,
         ko=ko,
         sudden_death_winner=sd_winner,
@@ -1152,8 +2057,131 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         rounds=rounds_out,
         usage=usage,
         report=report_path,
+        incomplete=bool(incomplete_rounds),
+        incomplete_rounds=incomplete_rounds,
+        flag="*" if incomplete_rounds else "",
+        ladder=ladder_result,
+        ladder_error=ladder_error,
         kanban=kanban_note,
     )
+
+
+# ---------------------------------------------------------------- recommend
+
+
+def _ladder_json() -> dict:
+    data = _read_json_file(_data_dir() / "ladder.json", {"updated": None, "lanes": {}})
+    if not isinstance(data, dict) or not isinstance(data.get("lanes"), dict):
+        return {"updated": None, "lanes": {}}
+    return data
+
+
+def _short_name(model_id: str) -> str:
+    try:
+        return _ladder_module().short_name(model_id)
+    except Exception:  # noqa: BLE001 — display fallback only
+        tail = str(model_id or "").rstrip("/").split("/")[-1]
+        return tail[:18] or "model"
+
+
+def _elo_for(lane: str, model: str):
+    lane_data = (_ladder_json().get("lanes") or {}).get(lane) or {}
+    entry = (lane_data.get("models") or {}).get(model) or {}
+    return entry.get("elo")
+
+
+def _recommend_lane(lane: str, candidates=None) -> tuple[dict | None, str | None]:
+    try:
+        return _ladder_module().recommend(_data_dir(), lane, candidates), None
+    except Exception as exc:  # noqa: BLE001 — missing ladder module degrades
+        return None, f"ladder unavailable: {type(exc).__name__}: {exc}"
+
+
+@_guard
+def kombat_recommend(args: dict, **kwargs) -> str:
+    """Ladder-backed knockout pick per lane, or per open kanban card (board mode)."""
+    if args.get("ladder") or str(args.get("mode") or "").lower() == "ladder":
+        return _ok(mode="ladder", ladder=_ladder_json())
+
+    candidates = args.get("candidates")
+    if isinstance(candidates, str):
+        candidates = [c for c in candidates.split(",") if c.strip()]
+    elif not isinstance(candidates, list):
+        candidates = None
+
+    want_board = bool(args.get("board"))
+    if want_board:
+        cards, warn = _scout_kanban_open()
+        warnings = [warn] if warn else []
+        try:
+            ln = _lanes_module()
+        except Exception as exc:  # noqa: BLE001
+            return _err(f"lane engine unavailable: {exc}")
+        recommendations = []
+        mapping: dict = {}
+        for card in cards:
+            cid = card.get("id")
+            if not cid:
+                continue
+            text = _scout_task_text(card)
+            classified = ln.classify(text)
+            lane = classified[0]["lane"] if classified else "reasoning"
+            rec, rec_err = _recommend_lane(lane, candidates)
+            if rec_err:
+                warnings.append(rec_err)
+                continue
+            pick = rec.get("pick")
+            if not pick:
+                warnings.append(f"no pick for card {cid} lane {lane}")
+                continue
+            entry = {
+                "lane": lane,
+                "pick": pick,
+                "short": _short_name(pick),
+                "confidence": rec.get("confidence") or "low",
+                "elo": rec.get("elo") if rec.get("elo") is not None else _elo_for(lane, pick),
+                "updated": _now_iso(),
+            }
+            mapping[str(cid)] = entry
+            recommendations.append(
+                {"card": str(cid), "title": card.get("title"), "lanes": classified, **entry}
+            )
+        written = 0
+        if mapping:
+            try:
+                _ladder_module().write_recommendations(_data_dir(), mapping)
+                written = len(mapping)
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"could not write recommendations.json: {type(exc).__name__}: {exc}")
+        return _ok(mode="board", recommendations=recommendations, mapping=mapping,
+                   written=written, warnings=warnings)
+
+    lane = args.get("lane")
+    text = args.get("input")
+    if isinstance(text, dict):
+        text = text.get("input") or text.get("text") or ""
+    card_id = args.get("card")
+    if not lane and card_id:
+        task, warn = _scout_kanban_task(str(card_id))
+        if task:
+            text = _scout_task_text(task) or text
+    classified = []
+    if not lane:
+        try:
+            classified = _lanes_module().classify(str(text or ""))
+        except Exception:  # noqa: BLE001
+            classified = []
+        lane = classified[0]["lane"] if classified else "reasoning"
+    lane = str(lane)
+    if lane not in getattr(_lanes_module(), "LANES", (lane,)):
+        return _err(f"unknown lane {lane!r}; expected one of {', '.join(getattr(_lanes_module(), 'LANES', ()))}.")
+
+    rec, rec_err = _recommend_lane(lane, candidates)
+    if rec_err:
+        return _err(rec_err, lane=lane)
+    payload = dict(rec or {})
+    payload.update({"mode": "lane", "lane": lane, "classified": classified, "recommendation": rec})
+    return _ok(**payload)
 
 
 # ---------------------------------------------------------------- history/export
@@ -1179,11 +2207,15 @@ def kombat_history(args: dict, **kwargs) -> str:
         fights=[
             {
                 "ts": f.get("ts"),
+                "fight_id": f.get("fight_id"),
                 "fighter_a": f.get("fighter_a"),
                 "fighter_b": f.get("fighter_b"),
                 "winner": f.get("winner"),
                 "ko": f.get("ko"),
                 "points": f.get("points"),
+                "incomplete": f.get("incomplete", False),
+                "lanes": f.get("lanes") or (f.get("card") or {}).get("lanes"),
+                "card": (f.get("card") or {}).get("id"),
                 "report": f.get("report"),
             }
             for f in recent
@@ -1238,23 +2270,37 @@ def kombat_export(args: dict, **kwargs) -> str:
                 lines.append(f"## {rnd['id']} — {rnd['name']} ({rnd['points']} pt/task)")
                 for t in rnd["tasks"]:
                     lines.append(
-                        f"- {t['id']}: A {t['a']}/{t['a_max']} ({t['points_a']} pts) vs "
+                        f"- {t['id']} [{t.get('lane') or '—'}] {t.get('title') or ''}: "
+                        f"A {t['a']}/{t['a_max']} ({t['points_a']} pts) vs "
                         f"B {t['b']}/{t['b_max']} ({t['points_b']} pts)"
+                        + (f" — fraction A {t['a_fraction']} / B {t['b_fraction']}"
+                           if t.get("a_fraction") is not None or t.get("b_fraction") is not None else "")
+                        + (f" — A {t['a_status']}" if t.get("a_status") and t["a_status"] != "scored" else "")
+                        + (f" — B {t['b_status']}" if t.get("b_status") and t["b_status"] != "scored" else "")
                         + (" — K.O." if t.get("ko") else "")
                         + (f" — excluded: {t['excluded']}" if t.get("excluded") else "")
                     )
+                if rnd.get("incomplete"):
+                    lines.append(f"_Round incomplete — excluded from points ({rnd['name']})._")
                 lines.append("")
             out_path.write_text("\n".join(lines), encoding="utf-8")
         else:  # csv
-            rows = ["round,task,fighter_a,score_a,max_a,points_a,fighter_b,score_b,max_b,points_b,ko,excluded"]
+            rows = ["round,round_points,round_points_a,round_points_b,incomplete,task,lane,title,"
+                    "fighter_a,score_a,fraction_a,status_a,points_a,fighter_b,score_b,fraction_b,"
+                    "status_b,points_b,ko,excluded"]
             for rnd in fight.get("rounds", []):
                 for t in rnd["tasks"]:
                     rows.append(
                         ",".join(
                             str(x).replace(",", ";")
                             for x in (
-                                rnd["id"], t["id"], fight.get("fighter_a"), t["a"], t["a_max"], t["points_a"],
-                                fight.get("fighter_b"), t["b"], t["b_max"], t["points_b"],
+                                rnd["id"], rnd.get("points", ""), rnd.get("points_a", ""),
+                                rnd.get("points_b", ""), rnd.get("incomplete", False),
+                                t["id"], t.get("lane") or "", t.get("title") or "",
+                                fight.get("fighter_a"), t["a"], t.get("a_fraction", ""),
+                                t.get("a_status", ""), t["points_a"],
+                                fight.get("fighter_b"), t["b"], t.get("b_fraction", ""),
+                                t.get("b_status", ""), t["points_b"],
                                 t.get("ko", False), t.get("excluded") or "",
                             )
                         )

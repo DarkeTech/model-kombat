@@ -6,7 +6,7 @@
       "lane": "instruction",
       "difficulty": 1,
       "title": "Exact format 3 sentences 20 words",
-      "prompt": "Write a product description for a solar lamp. Constraints:\n- Exactly 3 sentences\n- Exactly 20 words total\n- The first word must be \"Bright\"\n- Do not use the words: amazing, best, incredible, perfect\n- End with a period",
+      "prompt": "Write a product description for a solar lamp. Constraints:\\n- Exactly 3 sentences\\n- Exactly 20 words total\\n- The first word must be \\\"Bright\\\"\\n- Do not use the words: amazing, best, incredible, perfect\\n- End with a period",
       "check": {
         "type": "constraints",
         "sentences": 3,
@@ -23,14 +23,14 @@
         ],
         "ends_with": "."
       },
-      "reference": "Bright solar lamp provides light at night. It charges during the day using sunlight. Easy to install and use."
+      "reference": "Bright solar lamp provides light at night. It charges during the day using sunlight. Easy to install and use daily."
     },
     {
       "id": "instruction-002",
       "lane": "instruction",
       "difficulty": 1,
       "title": "Two sentences 15 words",
-      "prompt": "Write a short announcement about a workshop. Constraints:\n- Exactly 2 sentences\n- Exactly 15 words total\n- Must start with \"Join us\"\n- Must end with an exclamation mark\n- Do not use the word \"free\"",
+      "prompt": "Write a short announcement about a workshop. Constraints:\\n- Exactly 2 sentences\\n- Exactly 15 words total\\n- Must start with \\\"Join us\\\"\\n- Must end with an exclamation mark\\n- Do not use the word \\\"free\\\"",
       "check": {
         "type": "constraints",
         "sentences": 2,
@@ -44,14 +44,14 @@
           "free"
         ]
       },
-      "reference": "Join us for the workshop tomorrow. Learn new skills and have fun!"
+      "reference": "Join us for the exciting workshop tomorrow. Learn new skills and have fun together always!"
     },
     {
       "id": "instruction-003",
       "lane": "instruction",
       "difficulty": 2,
       "title": "Four sentences 30 words",
-      "prompt": "Write a paragraph about recycling. Constraints:\n- Exactly 4 sentences\n- Exactly 30 words total\n- The first word must be \"Recycling\"\n- Must end with a period\n- Do not use the words: waste, trash",
+      "prompt": "Write a paragraph about recycling. Constraints:\\n- Exactly 4 sentences\\n- Exactly 30 words total\\n- The first word must be \\\"Recycling\\\"\\n- Must end with a period\\n- Do not use the words: waste, trash",
       "check": {
         "type": "constraints",
         "sentences": 4,
@@ -66,14 +66,14 @@
           "trash"
         ]
       },
-      "reference": "Recycling helps the environment. It reduces pollution. Everyone should participate. Let's start today."
+      "reference": "Recycling helps the environment and saves energy. It reduces pollution in our cities and rivers. Everyone should participate by sorting materials correctly. Let's start today to make a positive impact."
     },
     {
       "id": "instruction-004",
       "lane": "instruction",
       "difficulty": 2,
       "title": "Three sentences 25 words with phrase",
-      "prompt": "Describe a weekend trip. Constraints:\n- Exactly 3 sentences\n- Exactly 25 words total\n- Must start with \"Last weekend\"\n- Must contain the phrase \"lake side\"\n- Must end with a period\n- Do not use the word \"boring\"",
+      "prompt": "Describe a weekend trip. Constraints:\\n- Exactly 3 sentences\\n- Exactly 25 words total\\n- Must start with \\\"Last weekend\\\"\\n- Must contain the phrase \\\"lake side\\\"\\n- Must end with a period\\n- Do not use the word \\\"boring\\\"",
       "check": {
         "type": "constraints",
         "sentences": 3,
@@ -90,14 +90,14 @@
           "lake side"
         ]
       },
-      "reference": "Last weekend we went to the lake side. We stayed in a cabin and fished. The weather was perfect."
+      "reference": "Last weekend we went to the lake side. We stayed in a nice cabin and fished. The weather was perfect and we had great fun."
     },
     {
       "id": "instruction-005",
       "lane": "instruction",
       "difficulty": 3,
       "title": "Five sentences 40 words",
-      "prompt": "Write a short story opening. Constraints:\n- Exactly 5 sentences\n- Exactly 40 words total\n- The first word must be \"Once\"\n- Must end with a period\n- Do not use the words: king, queen, castle, dragon",
+      "prompt": "Write a short story opening. Constraints:\\n- Exactly 5 sentences\\n- Exactly 40 words total\\n- The first word must be \\\"Once\\\"\\n- Must end with a period\\n- Do not use the words: king, queen, castle, dragon",
       "check": {
         "type": "constraints",
         "sentences": 5,
@@ -114,14 +114,14 @@
           "dragon"
         ]
       },
-      "reference": "Once a traveler entered a dark forest. He heard strange sounds. Suddenly a light appeared. He followed it bravely. He found a hidden treasure."
+      "reference": "Once a traveler entered a dark forest today. He heard strange sounds from the ancient trees. Suddenly a soft light appeared in the distance. He followed it bravely through the dark night. He found a hidden treasure and felt joy."
     },
     {
       "id": "instruction-006",
       "lane": "instruction",
       "difficulty": 3,
       "title": "Two sentences 20 words question",
-      "prompt": "Write a response to a friend's question. Constraints:\n- Exactly 2 sentences\n- Exactly 20 words total\n- Must start with \"I think\"\n- Must end with a question mark\n- Do not use the word \"yes\"",
+      "prompt": "Write a response to a friend's question. Constraints:\\n- Exactly 2 sentences\\n- Exactly 20 words total\\n- Must start with \\\"I think\\\"\\n- Must end with a question mark\\n- Do not use the word \\\"yes\\\"",
       "check": {
         "type": "constraints",
         "sentences": 2,
@@ -135,7 +135,7 @@
           "yes"
         ]
       },
-      "reference": "I think we should go to the park tomorrow. What do you want to do?"
+      "reference": "I think we should go to the park tomorrow morning. What do you want to do and see there today?"
     }
   ]
 }
