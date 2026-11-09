@@ -25,7 +25,11 @@ exact checks, not by vibes.
    - If the host refuses the model override, do NOT work around it: tell the
      user to set `plugins.entries.model-kombat.llm.allow_model_override: true`
      in config.yaml and retry. The plugin never touches credentials itself.
-3. `kombat_score_answers` with both answer maps (pass `usage` + `errors_a/b`
+3. If scoring excluded rounds due to errors (usually 429 rate limits),
+   `kombat_rematch_errors` re-fights **only** the errored (task, fighter) pairs
+   and merges the answers into the stored fight — then score again. Never
+   re-run the whole fight just to fix a rate-limited round.
+4. `kombat_score_answers` with both answer maps (pass `usage` + `errors_a/b`
    from the run). Code rounds only execute with `allow_code_execution=true`
    (a user-visible setting) — otherwise they're excluded from points.
    Weighted points, Championship K.O. rule, sudden death on a tie. The tool
@@ -44,7 +48,7 @@ default to the pure fight.
 
 ## Slash commands (for the user)
 - `/kombat tasks` · `/kombat fight <A> vs <B>` · `/kombat agentic <A> vs <B>`
-- `/kombat status` · `/kombat score` · `/kombat history` · `/kombat export [json|md|csv]`
+- `/kombat status` · `/kombat rematch` · `/kombat score` · `/kombat history` · `/kombat export [json|md|csv]`
 Fights launched from slash commands run as background jobs — point the user at
 `/kombat status` and the kanban board.
 

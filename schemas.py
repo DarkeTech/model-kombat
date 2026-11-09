@@ -118,6 +118,27 @@ KOMBAT_SCORE_ANSWERS = {
     },
 }
 
+KOMBAT_REMATCH_ERRORS = {
+    "name": "kombat_rematch_errors",
+    "description": (
+        "Rematch the last fight's errored tasks: re-run only the (task, fighter) pairs that "
+        "errored in the previous kombat_run_fight (typically 429 rate limits), merge the new "
+        "answers into the stored fight, and shrink the error list to whatever still fails. "
+        "Use when a fight's scoring excluded rounds due to errors — rematch first, then "
+        "kombat_score_answers scores the merged fight. Same trust/budget rules as the run tool."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "temperature": {"type": "number", "description": "Sampling temperature for rematch calls. Default from settings (0)."},
+            "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default from settings."},
+            "budget_usd": {"type": "number", "description": "Stop rematching once cumulative cost exceeds this. Default from settings."},
+            "timeout_s": {"type": "number", "description": "Per-call timeout in seconds. Default from settings."},
+        },
+        "required": [],
+    },
+}
+
 KOMBAT_HISTORY = {
     "name": "kombat_history",
     "description": (

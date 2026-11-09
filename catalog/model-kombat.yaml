@@ -26,7 +26,7 @@ tier: community
 category: models
 requires_hermes: ">=0.23.0"
 docs_url: https://github.com/DarkeTech/model-kombat#readme
-version: "0.2.0"
+version: "0.3.0"
 platforms: []
 screenshots: []
 capabilities:
@@ -35,6 +35,7 @@ capabilities:
     - kombat_run_fight
     - kombat_run_agentic_fight
     - kombat_score_answers
+    - kombat_rematch_errors
     - kombat_history
     - kombat_export
   provides_hooks: []

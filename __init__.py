@@ -78,6 +78,9 @@ def _handle_kombat(ctx, raw_args: str) -> str:
         fn = tools.kombat_run_fight if sub == "fight" else _agentic_handler
         return _start_job(ctx, sub, fn, {"fighter_a": fighter_a, "fighter_b": fighter_b})
 
+    if sub == "rematch":
+        return _start_job(ctx, "rematch", tools.kombat_rematch_errors, {})
+
     if sub == "status":
         if _JOB["running"]:
             return f"Fight ({_JOB['kind']}) is running… check the model-kombat kanban board."
@@ -131,6 +134,7 @@ def _handle_kombat(ctx, raw_args: str) -> str:
         "  /kombat fight <A> vs <B>          pure fight (ctx.llm, budgeted) — background job\n"
         "  /kombat agentic <A> vs <B>        agentic fight (kanban workers, model overrides)\n"
         "  /kombat status                    background fight status\n"
+        "  /kombat rematch                   re-fight the last fight's errored tasks\n"
         "  /kombat score                     score the last fight + versus scorecard\n"
         "  /kombat history                   recent fights\n"
         "  /kombat export [json|md|csv]      export the latest fight\n"
@@ -169,6 +173,12 @@ def register(ctx):
         handler=tools.kombat_score_answers,
     )
     ctx.register_tool(
+        name="kombat_rematch_errors",
+        toolset="model_kombat",
+        schema=schemas.KOMBAT_REMATCH_ERRORS,
+        handler=tools.kombat_rematch_errors,
+    )
+    ctx.register_tool(
         name="kombat_history",
         toolset="model_kombat",
         schema=schemas.KOMBAT_HISTORY,
@@ -185,7 +195,7 @@ def register(ctx):
         "kombat",
         lambda raw: _handle_kombat(ctx, raw),
         description="Model Kombat: pit two models against each other and score the fight",
-        args_hint="[tasks | fight <A> vs <B> | agentic <A> vs <B> | score | status | history | export]",
+        args_hint="[tasks | fight <A> vs <B> | agentic <A> vs <B> | rematch | score | status | history | export]",
     )
 
     skills_dir = Path(__file__).parent / "skills"

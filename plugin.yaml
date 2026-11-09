@@ -1,5 +1,5 @@
 name: model-kombat
-version: 0.2.0
+version: 0.3.0
 description: "Model Kombat — pit two Hermes models against each other in 3 escalating rounds (Warm-up, Main Event, Championship + sudden death), scored mechanically (executed code, exact counts, synonym-aware facts), with a live kanban scoreboard and optional agentic worker fights. Choose your fighter."
 author: DarkeTech
 kind: standalone
@@ -11,6 +11,7 @@ provides_tools:
   - kombat_run_fight
   - kombat_run_agentic_fight
   - kombat_score_answers
+  - kombat_rematch_errors
   - kombat_history
   - kombat_export
 config_schema:

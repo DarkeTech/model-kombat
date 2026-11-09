@@ -73,6 +73,7 @@ In any Hermes session:
 /kombat fight A vs B                   # pure fight — background job, watch the board
 /kombat agentic A vs B                 # agentic fight — kanban workers with model overrides
 /kombat status                         # background fight status
+/kombat rematch                        # re-fight the last fight's errored tasks (e.g. after a 429)
 /kombat score                          # score the last fight + versus scorecard
 /kombat history                        # recent fights
 /kombat export [json|md|csv]           # export the latest fight
@@ -104,6 +105,10 @@ counts for format/summary, and **subprocess execution** for code tasks
 (leap-year, Sudoku validator, run-length encode, second-largest debug).
 The debug task falls back to a labelled heuristic only when no executable code
 is present. Round points go to the higher score fraction; draws split.
+
+If a fight's rounds were excluded because a fighter errored (typically a 429
+rate limit), `/kombat rematch` re-fights **only** those (task, fighter) pairs
+and merges the answers — then score again. No need to re-run the whole fight.
 
 ## Disclosure (please read before installing)
 

@@ -271,6 +271,49 @@ def test_run_fight_without_host_ctx():
     assert out["ok"] is False  # no ctx bound outside Hermes — must degrade, not crash
 
 
+def test_rematch_errors_merges():
+    # Fake host: last fight has T6 errored for fighter A; rematch answers it.
+    class RematchCtx(_FakeCtx):
+        def __init__(self):
+            super().__init__()
+            self.state.set("last_fight", {
+                "fighter_a": "fake/a", "fighter_b": "fake/b", "mode": "pure",
+                "answers_a": {"T1": "a) $44.30, b) $5.70, c) $12.20", "T6": ""},
+                "answers_b": {"T1": "a) $44.30, b) $5.70, c) $12.20", "T6": BAD_T6},
+                "meta_a": {}, "meta_b": {},
+                "errors": [{"task": "T6", "fighter": "fake/a", "error": "429 rate limit"}],
+                "usage": {"fake/a": {"cost_usd": 0.0, "tokens": 10, "latency_s": 1.0},
+                          "fake/b": {"cost_usd": 0.0, "tokens": 10, "latency_s": 1.0}},
+                "kanban": None,
+            })
+
+    tools.set_ctx(RematchCtx())
+    try:
+        out = json.loads(tools.kombat_rematch_errors({"budget_usd": 5.0}))
+    finally:
+        tools.set_ctx(None)
+    assert out["ok"], out
+    assert out["rematched"] == [{"task": "T6", "fighter": "fake/a"}], out["rematched"]
+    assert out["still_failing"] == []
+    # FakeLlm returns the money string for every call — merge must have written it.
+    assert out["answers_a"]["T6"].startswith("a) $44.30")
+    assert out["usage"]["fake/a"]["tokens"] == 40  # 10 prior + 30 rematch
+
+
+def test_rematch_without_errors():
+    class CleanCtx(_FakeCtx):
+        def __init__(self):
+            super().__init__()
+            self.state.set("last_fight", {"fighter_a": "a", "fighter_b": "b", "errors": []})
+
+    tools.set_ctx(CleanCtx())
+    try:
+        out = json.loads(tools.kombat_rematch_errors({}))
+    finally:
+        tools.set_ctx(None)
+    assert out["ok"] is False and "no errored tasks" in out["error"]
+
+
 if __name__ == "__main__":
     test_list_tasks()
     test_money_scorer()
@@ -284,4 +327,6 @@ if __name__ == "__main__":
     test_history_and_export()
     test_run_fight_with_mock_host()
     test_run_fight_without_host_ctx()
+    test_rematch_errors_merges()
+    test_rematch_without_errors()
     print("all Model Kombat tests passed")

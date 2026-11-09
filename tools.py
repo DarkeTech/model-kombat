@@ -322,6 +322,125 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
     )
 
 
+@_guard
+def kombat_rematch_errors(args: dict, **kwargs) -> str:
+    """Re-run only the errored (task, fighter) pairs from the last fight.
+
+    Rate limits (429s) are the usual cause: the original fight excluded those
+    tasks from points, which can nullify a championship. A rematch re-asks just
+    the failed pairs, merges the new answers into last_fight, and shrinks the
+    error list to whatever still fails — then kombat_score_answers scores the
+    merged fight as usual.
+    """
+    if _CTX is None or not hasattr(_CTX, "llm"):
+        return _err(
+            "No live Hermes host context (ctx.llm unavailable). Run this inside a Hermes "
+            "session with the plugin enabled, not from a bare Python import."
+        )
+    try:
+        last = _CTX.state.get("last_fight", default=None) if hasattr(_CTX, "state") else None
+    except Exception:
+        last = None
+    if not last:
+        return _err("No fight stored in this session yet — run kombat_run_fight first.")
+    errors = list(last.get("errors") or [])
+    if not errors:
+        return _err("Last fight has no errored tasks to rematch. Run kombat_score_answers to score it as-is.")
+
+    try:
+        suite = _load_suite()
+    except Exception as exc:
+        return _err(f"Failed to load task suite: {exc}")
+
+    try:
+        temperature = float(args.get("temperature", _cfg("temperature", 0)))
+        max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
+        budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
+        timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
+    except (TypeError, ValueError):
+        return _err("temperature/max_tokens/budget_usd/timeout_s must be numbers.")
+
+    fighters = (last.get("fighter_a"), last.get("fighter_b"))
+    answers = {fighters[0]: dict(last.get("answers_a") or {}),
+               fighters[1]: dict(last.get("answers_b") or {})}
+    meta = {fighters[0]: dict(last.get("meta_a") or {}),
+            fighters[1]: dict(last.get("meta_b") or {})}
+    usage = dict(last.get("usage") or {})
+    rematched, still_failing = [], []
+    spend = 0.0
+
+    for err in errors:
+        tid, fighter = err.get("task"), err.get("fighter")
+        if tid not in suite["tasks"] or fighter not in fighters:
+            still_failing.append(err)
+            continue
+        try:
+            text, call_usage, attempts, call_err = _complete_with_retry(
+                _CTX, fighter, suite["tasks"][tid]["prompt"], temperature, max_tokens, timeout_s
+            )
+        except PermissionError as exc:
+            return _err(
+                f"Host refused the model override during rematch: {exc}. "
+                "Check plugins.entries.model-kombat.llm.allow_model_override in config.yaml."
+            )
+        spend += float(call_usage.get("cost_usd") or 0.0)
+        if call_err:
+            still_failing.append({"task": tid, "fighter": fighter, "error": call_err})
+            answers[fighter][tid] = text
+            meta[fighter][tid] = {"error": call_err, "attempts": attempts, "latency_s": 0, "usage": call_usage}
+        else:
+            rematched.append({"task": tid, "fighter": fighter})
+            answers[fighter][tid] = text
+            meta[fighter][tid] = {"error": None, "attempts": attempts, "latency_s": 0, "usage": call_usage}
+        slot = usage.setdefault(fighter, {"cost_usd": 0.0, "tokens": 0, "latency_s": 0.0})
+        slot["cost_usd"] = float(slot.get("cost_usd") or 0.0) + float(call_usage.get("cost_usd") or 0.0)
+        slot["tokens"] = int(slot.get("tokens") or 0) + int(call_usage.get("total_tokens") or call_usage.get("output_tokens") or 0)
+        if spend > budget:
+            still_failing.extend(e for e in errors if e not in still_failing and e not in rematched)
+            break
+
+    last.update(
+        {
+            "answers_a": answers[fighters[0]],
+            "answers_b": answers[fighters[1]],
+            "meta_a": meta[fighters[0]],
+            "meta_b": meta[fighters[1]],
+            "errors": still_failing,
+            "usage": usage,
+        }
+    )
+    try:
+        _CTX.state.set("last_fight", last)
+    except Exception:
+        pass
+
+    # Best-effort kanban note on the fight card.
+    kanban_note = None
+    try:
+        from . import kanban as _kb
+
+        ids = last.get("kanban")
+        if ids and ids.get("parent"):
+            ok, out = _kb._dispatch(
+                _kb._cli("--board", _kb.BOARD, "comment", ids["parent"],
+                         f"Rematch: {len(rematched)} errored task(s) re-fought, {len(still_failing)} still failing.")
+            )
+            kanban_note = "noted on kanban parent card" if ok else f"kanban note skipped: {out[:200]}"
+    except Exception as exc:
+        kanban_note = f"kanban note skipped: {exc}"
+
+    return _ok(
+        fighters=list(fighters),
+        rematched=rematched,
+        still_failing=still_failing,
+        errors=still_failing,
+        answers_a=answers[fighters[0]],
+        answers_b=answers[fighters[1]],
+        usage=usage,
+        kanban=kanban_note,
+    )
+
+
 # ---------------------------------------------------------------- scorers
 
 def _norm(text: str) -> str:
