@@ -189,56 +189,109 @@ function resultCell(task, nameA, nameB) {
   })
 }
 
+function usageCostText(u) {
+  if (!u || typeof u.cost_usd !== 'number' || !Number.isFinite(u.cost_usd)) return 'n/a'
+  const text = `$${u.cost_usd.toFixed(4)}`
+  return u.cost_source === 'estimated' ? `${text} est.` : text
+}
+
+function usageInt(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? String(Math.trunc(value)) : '—'
+}
+
+function usageSection(live, nameA, nameB) {
+  const usage = (live && live.usage) || {}
+  const rows = [['a', nameA], ['b', nameB]].map(([side, name]) => {
+    const u = usage[side] && typeof usage[side] === 'object' ? usage[side] : {}
+    const cell = { padding: '4px 8px', fontSize: '0.8rem', color: 'var(--ui-text)' }
+    return jsxs('tr', { key: side, children: [
+      jsx('td', { style: cell, children: name }),
+      jsx('td', { style: cell, children: `${(typeof u.latency_s === 'number' ? u.latency_s : 0).toFixed(1)}s` }),
+      jsx('td', { style: cell, children: usageInt(u.tokens) }),
+      jsx('td', { style: cell, children: usageInt(u.input_tokens) }),
+      jsx('td', { style: cell, children: usageInt(u.output_tokens) }),
+      jsx('td', { style: cell, children: usageCostText(u) })
+    ] })
+  })
+  const th = { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }
+  return jsxs('div', { style: { marginTop: '12px' } }, [
+    jsx('div', { style: { fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--ui-text)', textTransform: 'uppercase' }, children: 'Usage' }),
+    jsx('table', {
+      style: { width: '100%', borderCollapse: 'collapse', marginTop: '6px', fontSize: '0.8rem' },
+      children: [
+        jsx('thead', {}, jsx('tr', {}, ['Fighter', 'Latency', 'Tokens', 'Input', 'Output', 'Est. cost'].map((h) => jsx('th', { key: h, style: th, children: h })))),
+        jsx('tbody', {}, rows)
+      ]
+    })
+  ])
+}
+
+function shortForRef(ref, a, b) {
+  if (!ref) return ''
+  if (ref === 'a' || ref === a.name || ref === a.id) return a.name
+  if (ref === 'b' || ref === b.name || ref === b.id) return b.name
+  return String(ref)
+}
+
+function sdUsed(sd) {
+  if (!sd || typeof sd !== 'object') return false
+  if (sd.used || sd.fought) return true
+  if (['fighting', 'done', 'scoring', 'error'].includes(sd.state)) return true
+  return (sd.tasks || []).some((task) => ['a', 'b'].some((side) => task && task[side] && task[side].state && task[side].state !== 'waiting'))
+}
+
+function taskTable(tasks, nameA, nameB) {
+  const th = { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }
+  return jsx('table', {
+    style: { width: '100%', borderCollapse: 'collapse', marginTop: '6px' },
+    children: [
+      jsx('thead', {}, jsx('tr', {}, [
+        jsx('th', { style: th, children: 'Task' }),
+        jsx('th', { style: th, children: nameA }),
+        jsx('th', { style: th, children: nameB }),
+        jsx('th', { style: th, children: 'Result' })
+      ])),
+      jsx('tbody', {}, (tasks || []).map((task) => jsxs('tr', {
+        key: task.id || (task.title || 'task'),
+        children: [
+          jsx('td', {
+            style: { padding: '6px 8px', border: '1px solid var(--ui-border)', verticalAlign: 'top', fontSize: '0.8rem', color: 'var(--ui-text)' },
+            children: [
+              jsx('b', { children: String(task.id || '?') }),
+              jsx('small', { style: { display: 'block', color: 'var(--ui-text-tertiary)', fontSize: '0.7rem' }, children: String(task.title || '') })
+            ]
+          }),
+          taskCell(task, 'a', nameA),
+          taskCell(task, 'b', nameB),
+          resultCell(task, nameA, nameB)
+        ]
+      })))
+    ]
+  })
+}
+
 function roundsList(live, nameA, nameB) {
   const rounds = (live && live.rounds) || []
   if (!rounds.length) {
     return jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: '0.8rem' }, children: 'No rounds yet.' })
   }
+  const incompleteIds = new Set((live && live.incomplete_rounds) || [])
+  for (const rnd of rounds) {
+    if (rnd && rnd.incomplete) incompleteIds.add(rnd.id)
+  }
   return jsxs('div', {}, rounds.map((rnd) => {
     const tasks = (rnd && rnd.tasks) || []
+    const rname = rnd.name || 'Fight'
+    const starred = incompleteIds.has(rnd.id) && !String(rname).endsWith('*') ? `${rname} *` : rname
     return jsxs('div', {
       key: rnd.id || rnd.name,
       style: { marginTop: '12px' }
     }, [
       jsx('div', {
         style: { fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--ui-text)', textTransform: 'uppercase' },
-        children: `${rnd.id || ''} — ${rnd.name || 'Fight'}  ${'★'.repeat(rnd.points || 0)}`
+        children: `${rnd.id || ''} — ${starred}  ${'★'.repeat(rnd.points || 0)}`
       }),
-      jsx('table', {
-        style: { width: '100%', borderCollapse: 'collapse', marginTop: '6px' },
-        children: [
-          jsx('thead', {}, jsx('tr', {}, [
-            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: 'Task' }),
-            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: nameA }),
-            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: nameB }),
-            jsx('th', { style: { textAlign: 'left', fontSize: '0.7rem', color: 'var(--ui-text-tertiary)', padding: '4px 8px' }, children: 'Result' })
-          ])),
-          jsx('tbody', {}, tasks.map((task) => jsxs('tr', {
-            key: task.id || (task.title || 'task'),
-            children: [
-              jsx('td', {
-                style: {
-                  padding: '6px 8px',
-                  border: '1px solid var(--ui-border)',
-                  verticalAlign: 'top',
-                  fontSize: '0.8rem',
-                  color: 'var(--ui-text)'
-                },
-                children: [
-                  jsx('b', { children: String(task.id || '?') }),
-                  jsx('small', {
-                    style: { display: 'block', color: 'var(--ui-text-tertiary)', fontSize: '0.7rem' },
-                    children: String(task.title || '')
-                  })
-                ]
-              }),
-              taskCell(task, 'a', nameA),
-              taskCell(task, 'b', nameB),
-              resultCell(task, nameA, nameB)
-            ]
-          })))
-        ]
-      })
+      taskTable(tasks, nameA, nameB)
     ])
   }))
 }
@@ -280,7 +333,45 @@ function arenaView(live) {
       children: `POINTS ${a.name} ${points.a ?? 0} — ${points.b ?? 0} ${b.name}`
     })
   ]
-  if (live && live.ko) {
+  const isDraw = live && live.winner === 'draw'
+  const budget = live && live.budget && typeof live.budget === 'object' ? live.budget : null
+  const budgetHit = Boolean((budget && budget.exceeded) || (live && live.budget_exceeded))
+  if (budgetHit) {
+    const reason = budget && budget.reason ? ` (${budget.reason})` : ''
+    children.push(jsx('div', {
+      role: 'status',
+      style: {
+        textAlign: 'center', border: '2px solid var(--ui-warning, var(--ui-accent))',
+        padding: '6px 10px', margin: '8px 0', letterSpacing: '0.12em', fontWeight: 700,
+        fontSize: '0.8rem', color: 'var(--ui-text)', textTransform: 'uppercase'
+      },
+      children: `BUDGET CAP HIT — remaining tasks skipped${reason}`
+    }))
+  }
+  if (isDraw) {
+    const edge = live.edge && typeof live.edge === 'object' ? live.edge : null
+    const drawChildren = [
+      jsx('div', {
+        role: 'status',
+        style: {
+          textAlign: 'center', border: '2px solid var(--ui-accent)', padding: '6px 10px',
+          margin: '8px 0', letterSpacing: '0.2em', fontWeight: 700, fontSize: '0.9rem',
+          color: 'var(--ui-text)', textTransform: 'uppercase'
+        },
+        children: 'DRAW'
+      })
+    ]
+    if (edge) {
+      const short = edge.fighter ? shortForRef(edge.fighter, a, b) : ''
+      const reason = edge.reason || edge.label || ''
+      drawChildren.push(jsx('div', {
+        style: { textAlign: 'center', fontSize: '0.75rem', color: 'var(--ui-text-tertiary)', marginTop: '4px' },
+        children: short ? `efficiency edge: ${short} — ${reason}` : `efficiency edge: ${reason}`
+      }))
+    }
+    children.push(jsxs('div', {}, drawChildren))
+  }
+  if (live && live.ko && !isDraw) {
     children.push(jsx('div', {
       role: 'status',
       style: {
@@ -299,7 +390,7 @@ function arenaView(live) {
       children: 'K.O.'
     }))
   }
-  if (live && live.winner) {
+  if (live && live.winner && !isDraw) {
     children.push(jsx('div', {
       style: {
         textAlign: 'center',
@@ -315,6 +406,38 @@ function arenaView(live) {
     }))
   }
   children.push(roundsList(live, a.name, b.name))
+  if (sdUsed(live && live.sudden_death)) {
+    const sd = live.sudden_death
+    const sdChildren = [
+      jsx('div', {
+        role: 'status',
+        style: {
+          textAlign: 'center', border: '2px solid var(--ui-warning, var(--ui-accent))',
+          padding: '6px 10px', margin: '12px 0 4px', letterSpacing: '0.2em', fontWeight: 700,
+          fontSize: '0.9rem', color: 'var(--ui-text)', textTransform: 'uppercase'
+        },
+        children: 'SUDDEN DEATH'
+      })
+    ]
+    if (live.sudden_death_winner) {
+      sdChildren.push(jsx('div', {
+        style: { textAlign: 'center', fontSize: '0.8rem', color: 'var(--ui-text)', marginTop: '4px' },
+        children: `SUDDEN DEATH winner: ${shortForRef(live.sudden_death_winner, a, b)}`
+      }))
+    }
+    sdChildren.push(taskTable(sd.tasks || [], a.name, b.name))
+    children.push(jsxs('div', {}, sdChildren))
+  }
+  children.push(usageSection(live, a.name, b.name))
+  const incompleteIds = new Set((live && live.incomplete_rounds) || [])
+  const hasIncomplete = Boolean(live && live.incomplete) || incompleteIds.size > 0 ||
+    ((live && live.rounds) || []).some((rnd) => rnd && rnd.incomplete)
+  if (hasIncomplete) {
+    children.push(jsx('div', {
+      style: { fontSize: '0.75rem', color: 'var(--ui-text-tertiary)', textAlign: 'center', marginTop: '8px' },
+      children: '* round excluded from points (errored/skipped)'
+    }))
+  }
   return jsxs('div', { children })
 }
 

@@ -1,0 +1,49 @@
+{
+  "status": "done",
+  "fight_id": "20261110-130000",
+  "card": {"title": "Checkout totals refactor", "lanes": ["coding", "debugging"]},
+  "fighters": {
+    "a": {"id": "stealth/crouton-alpha", "short": "Crouton"},
+    "b": {"id": "deepseek/deepseek-v4.1-flash-1017", "short": "DS-Flash"}
+  },
+  "hp": {"a": 50, "b": 50},
+  "rounds": [
+    {
+      "id": "R1", "name": "Warm-up", "points": 1, "state": "done",
+      "tasks": [
+        {"id": "coding-001", "lane": "coding", "title": "Sum cart line items",
+         "a": {"state": "done", "score": 1.0, "latency_s": 3.1, "cost_usd": 0.0002, "detail": "all cases passed"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 2.4, "cost_usd": 0.0001, "detail": "all cases passed"}},
+        {"id": "coding-002", "lane": "coding", "title": "Format money column",
+         "a": {"state": "done", "score": 1.0, "latency_s": 2.8, "cost_usd": 0.0002, "detail": "writes exactly 25 words"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 3.6, "cost_usd": 0.0002, "detail": "writes exactly 25 words"}}
+      ]
+    },
+    {
+      "id": "R2", "name": "Main Event", "points": 2, "state": "done",
+      "tasks": [
+        {"id": "debugging-004", "lane": "debugging", "title": "Find the duplicate-keys bug",
+         "a": {"state": "done", "score": 1.0, "latency_s": 5.2, "cost_usd": 0.0004, "detail": "3/3 cases"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 6.1, "cost_usd": 0.0003, "detail": "3/3 cases"}}
+      ]
+    }
+  ],
+  "sudden_death": null,
+  "winner": "draw",
+  "ko": false,
+  "edge": {
+    "fighter": "stealth/crouton-alpha",
+    "metric": "latency",
+    "reason": "faster total latency (18.400s vs 21.500s) — efficiency edge (not a win)",
+    "label": "efficiency edge (not a win)",
+    "a": 18.4,
+    "b": 21.5
+  },
+  "points": {"a": 5.0, "b": 5.0},
+  "usage": {
+    "a": {"cost_usd": null, "cost_source": "unknown", "tokens": 18000, "input_tokens": 11000, "output_tokens": 7000, "latency_s": 18.4},
+    "b": {"cost_usd": 0.0012, "cost_source": "estimated", "tokens": 19000, "input_tokens": 12000, "output_tokens": 7000, "latency_s": 21.5}
+  },
+  "report_path": "reports/fight-20261110-130000.html",
+  "updated": "2026-11-10T13:00:42+00:00"
+}

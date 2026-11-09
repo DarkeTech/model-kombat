@@ -127,6 +127,47 @@ def test_scout_task_id_heuristic():
     assert not PLUGIN._looks_like_task_id("debugging")
 
 
+def test_fight_with_intensity_flags():
+    captured = {}
+    original = PLUGIN._start_job
+    PLUGIN._start_job = _capture(captured)
+    try:
+        PLUGIN._handle_kombat(_Ctx(), "fight a/model vs b/model --lanes coding,sql --hard")
+        hard = dict(captured)
+        captured.clear()
+        PLUGIN._handle_kombat(_Ctx(), "fight a/model vs b/model --gauntlet")
+        gauntlet = dict(captured)
+    finally:
+        PLUGIN._start_job = original
+    assert hard["intensity"] == "hard", hard
+    assert hard["card"] == {"lanes": ["coding", "sql"], "intensity": "hard"}, hard
+    assert gauntlet["intensity"] == "gauntlet", gauntlet
+    assert "card" not in gauntlet
+
+
+def test_scout_flags_pass_intensity():
+    captured = {}
+    original = PLUGIN.tools.kombat_scout
+
+    def fake_scout(args, **kwargs):
+        captured.update(args)
+        return json.dumps({"ok": True, "card": {"id": "card-x", "rounds": []}})
+
+    PLUGIN.tools.kombat_scout = fake_scout
+    try:
+        PLUGIN._handle_kombat(_Ctx(), "scout write a python function --gauntlet")
+    finally:
+        PLUGIN.tools.kombat_scout = original
+    assert captured["intensity"] == "gauntlet", captured
+    assert captured["input"] == "write a python function", captured
+
+
+def test_split_fight_flags_keeps_intensity_tokens():
+    phrase, flags = PLUGIN._split_fight_flags("a/model vs b/model --hard --seed 3")
+    assert phrase == "a/model vs b/model", phrase
+    assert flags == {"hard": True, "seed": "3"}, flags
+
+
 def main():
     tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0

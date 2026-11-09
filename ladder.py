@@ -439,13 +439,20 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
 
         fights = pick["fights"]
         confidence = "low" if fights < 3 else ("medium" if fights < 8 else "high")
-        if margin < 15:
-            confidence = {"high": "medium", "medium": "low", "low": "low"}[confidence]
+        no_edge = runner_up is not None and margin < 15
+        if no_edge:
+            confidence = "low"
 
         pick_name = short_name(pick["model"])
         cpp = pick["cost_per_point"]
         cpp_txt = f"{cpp:.4f}" if cpp is not None else "n/a"
-        if runner_up is not None:
+        if runner_up is not None and no_edge:
+            why = (
+                f"{pick_name} and {short_name(runner_up['model'])} are within "
+                f"{margin:.0f} Elo in {lane} — this is an efficiency tiebreak "
+                f"(latency/cost), not a performance win ({fights} fights at {cpp_txt} per point)."
+            )
+        elif runner_up is not None:
             why = (
                 f"{pick_name} leads {lane} at {pick['elo']:.0f} Elo "
                 f"(+{margin:.0f} over {short_name(runner_up['model'])}) across "
@@ -463,6 +470,7 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
             "lane": lane,
             "elo": pick["elo"],
             "margin": round(margin, 2),
+            "verdict": "no clear edge" if no_edge else "clear edge",
             "confidence": confidence,
             "fights": fights,
             "cost_per_point": cpp,

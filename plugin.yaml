@@ -1,5 +1,5 @@
 name: model-kombat
-version: 0.4.0
+version: 0.5.0
 description: "Model Kombat — pit two Hermes models against each other on an adaptive lane card (Warm-up, Main Event, Championship + sudden death) or the fixed suite, scored mechanically (executed code, exact counts, synonym-aware facts, SQL rows), with a local lane scout, live kanban scoreboard and optional agentic worker fights."
 author: DarkeTech
 kind: standalone
@@ -32,6 +32,15 @@ config_schema:
     default: 0
     label: "Sampling temperature"
     description: "Applied to both fighters in pure fights. 0 = deterministic-ish, fairest."
+  default_intensity:
+    type: str
+    default: "standard"
+    label: "Default card intensity"
+    description: "Difficulty mix when a scout/fight does not pass intensity: standard (d1/d2/d3), hard (d2/d3, no d1) or gauntlet (every task d3)."
+    choices:
+      - standard
+      - hard
+      - gauntlet
   max_tokens:
     type: int
     default: 2000

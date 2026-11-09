@@ -36,6 +36,7 @@ def test_missing_files_defaults(tmp_path, monkeypatch):
     assert client.get("/ladder").json() == {"updated": None, "lanes": {}}
     assert client.get("/recommendations").json() == {}
     assert client.get("/history").json() == []
+    assert client.get("/cards").json() == []
 
 
 def test_files_roundtrip(tmp_path, monkeypatch):
@@ -51,10 +52,24 @@ def test_files_roundtrip(tmp_path, monkeypatch):
                               "short": "Crouton", "confidence": "medium", "elo": 1512}}),
         encoding="utf-8",
     )
+    (tmp_path / "cards.json").write_text(
+        json.dumps({
+            "card-abc123": {"id": "card-abc123", "title": "Kombat card — coding · sql",
+                            "lanes": ["coding", "sql"]},
+            "card-def456": {"title": "Kombat card — debugging",
+                            "lane_weights": [{"lane": "debugging", "weight": 1.0}]},
+            "junk": "not a card",
+        }),
+        encoding="utf-8",
+    )
     assert client.get("/live").json()["hp"] == {"a": 80, "b": 60}
     assert client.get("/ladder").json()["lanes"].keys() == {"coding"}
     assert client.get("/recommendations").json()["t_abc"]["short"] == "Crouton"
     assert client.get("/health").json()["live_exists"] is True
+    assert client.get("/cards").json() == [
+        {"id": "card-abc123", "title": "Kombat card — coding · sql", "lanes": ["coding", "sql"]},
+        {"id": "card-def456", "title": "Kombat card — debugging", "lanes": ["debugging"]},
+    ]
 
 
 def test_corrupt_files_never_raise(tmp_path, monkeypatch):
@@ -62,10 +77,12 @@ def test_corrupt_files_never_raise(tmp_path, monkeypatch):
     (tmp_path / "live.json").write_text("{ not json", encoding="utf-8")
     (tmp_path / "ladder.json").write_text("[1, 2]", encoding="utf-8")
     (tmp_path / "recommendations.json").write_text("oops", encoding="utf-8")
+    (tmp_path / "cards.json").write_text("{ not json", encoding="utf-8")
     assert client.get("/live").status_code == 200
     assert client.get("/live").json()["status"] == "idle"
     assert client.get("/ladder").json() == {"updated": None, "lanes": {}}
     assert client.get("/recommendations").json() == {}
+    assert client.get("/cards").json() == []
 
 
 def test_history_limit_and_bad_lines(tmp_path, monkeypatch):
@@ -89,3 +106,4 @@ def test_direct_calls(tmp_path, monkeypatch):
     assert api.live()["status"] == "idle"
     assert api.history(limit=5) == []
     assert api.recommendations() == {}
+    assert api.cards() == []

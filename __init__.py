@@ -60,14 +60,19 @@ def _start_job(ctx, kind: str, fn, fn_args: dict) -> str:
 
 
 def _split_fight_flags(text: str) -> tuple[str, dict]:
-    """Pull ``--card ID`` / ``--lanes a,b`` / ``--seed N`` out of a fight phrase."""
+    """Pull ``--card ID`` / ``--lanes a,b`` / ``--seed N`` / ``--hard`` / ``--gauntlet``."""
     flags: dict = {}
 
     def _take(match):
         flags[match.group(1)] = match.group(2)
         return " "
 
+    def _flag(match):
+        flags[match.group(1)] = True
+        return " "
+
     remainder = re.sub(r"--(card|lanes|seed)\s+(\S+)", _take, text or "")
+    remainder = re.sub(r"--(hard|gauntlet)\b", _flag, remainder)
     return re.sub(r"\s+", " ", remainder).strip(), flags
 
 
@@ -97,6 +102,9 @@ def _scout_summary(raw: str) -> str:
     card = data.get("card") or {}
     card_id = card.get("id") or "?"
     lines = [f"🥊 Fight card {card_id}", f"  {card.get('title') or 'Kombat card'}"]
+    if card.get("intensity"):
+        expected = data.get("expected_discrimination") or "unknown"
+        lines.append(f"  intensity: {card['intensity']} (expected discrimination: {expected})")
     lanes = card.get("lane_weights") or [{"lane": lane, "weight": 1} for lane in card.get("lanes") or []]
     if lanes:
         lines.append("  lanes: " + ", ".join(f"{l['lane']} ({l.get('weight', 1)})" for l in lanes))
@@ -124,14 +132,28 @@ def _handle_kombat(ctx, raw_args: str) -> str:
 
     if sub == "scout":
         if not rest.strip():
-            return "Usage: /kombat scout <task text, or a kanban card id>"
-        args: dict = {"input": rest.strip()}
-        if rest.strip().startswith("card:"):
-            args = {"card": rest.strip()[5:].strip()}
-        elif rest.strip().lower() in ("board", "all"):
+            return "Usage: /kombat scout <task text, or a kanban card id> [--hard|--gauntlet]"
+        intensity = None
+        for token in ("--gauntlet", "--hard"):
+            if re.search(rf"(?:^|\s){re.escape(token)}\b", rest):
+                intensity = token[2:]
+                rest = re.sub(rf"\s*{re.escape(token)}\b", "", rest)
+        rest = rest.strip()
+        args: dict = {"input": rest}
+        if intensity:
+            args["intensity"] = intensity
+        if rest.startswith("card:"):
+            args = {"card": rest[5:].strip()}
+            if intensity:
+                args["intensity"] = intensity
+        elif rest.lower() in ("board", "all"):
             args = {"board": True}
+            if intensity:
+                args["intensity"] = intensity
         elif _looks_like_task_id(rest):
-            args = {"card": rest.strip()}
+            args = {"card": rest}
+            if intensity:
+                args["intensity"] = intensity
         return _scout_summary(tools.kombat_scout(args))
 
     if sub == "recommend":
@@ -150,25 +172,31 @@ def _handle_kombat(ctx, raw_args: str) -> str:
         if " vs " not in phrase:
             return (
                 f"Usage: /kombat {sub} <model-a> vs <model-b> [--card <card-id>] "
-                f"[--lanes coding,sql] [--seed N]\n"
+                f"[--lanes coding,sql] [--seed N] [--hard|--gauntlet]\n"
                 "Example: /kombat fight stealth/crouton-alpha vs deepseek/deepseek-v4.1-flash-1017 "
                 "--card card-15b9f4edc0\n"
                 "Requires plugins.entries.model-kombat.llm.allow_model_override: true in config.yaml."
             )
         fighter_a, fighter_b = (s.strip() for s in phrase.split(" vs ", 1))
         payload: dict = {"fighter_a": fighter_a, "fighter_b": fighter_b}
+        intensity = "gauntlet" if flags.get("gauntlet") else ("hard" if flags.get("hard") else None)
         card_id = (flags.get("card") or "").strip()
         lanes = [lane.strip() for lane in (flags.get("lanes") or "").split(",") if lane.strip()]
         seed = flags.get("seed")
+        if intensity:
+            payload["intensity"] = intensity
         if card_id:
             payload["card"] = card_id
         elif lanes:
-            payload["card"] = {"lanes": lanes}
+            card_spec: dict = {"lanes": lanes}
+            if intensity:
+                card_spec["intensity"] = intensity
             if seed is not None:
                 try:
-                    payload["card"]["seed"] = int(seed)
+                    card_spec["seed"] = int(seed)
                 except (TypeError, ValueError):
                     return f"--seed must be an integer, got {seed!r}."
+            payload["card"] = card_spec
         fn = tools.kombat_run_fight if sub == "fight" else _agentic_handler
         return _start_job(ctx, sub, fn, payload)
 
@@ -229,10 +257,10 @@ def _handle_kombat(ctx, raw_args: str) -> str:
     return (
         "🥊 Model Kombat — choose your fighter. Adaptive cards, escalating stakes:\n"
         "  /kombat tasks                     list the legacy rounds (1pt / 2pt / 3pt + sudden death)\n"
-        "  /kombat scout <text|card:id|board> classify lanes, print card id + next fight command\n"
+        "  /kombat scout <text|card:id|board> [--hard|--gauntlet]  classify lanes, print card id + next fight command\n"
         "  /kombat recommend [lane|board]    ladder knockout pick (board = every open card)\n"
         "  /kombat ladder                    show the per-lane Elo ladder\n"
-        "  /kombat fight <A> vs <B> [--card id] [--lanes a,b] [--seed N]  pure fight (ctx.llm, budgeted) — background job\n"
+        "  /kombat fight <A> vs <B> [--card id] [--lanes a,b] [--seed N] [--hard|--gauntlet]  pure fight (ctx.llm, budgeted) — background job\n"
         "  /kombat agentic <A> vs <B>        agentic fight (kanban workers, model overrides)\n"
         "  /kombat status                    background fight status\n"
         "  /kombat rematch                   re-fight the last fight's errored tasks\n"
@@ -308,7 +336,7 @@ def register(ctx):
         "kombat",
         lambda raw: _handle_kombat(ctx, raw),
         description="Model Kombat: pit two models against each other and score the fight",
-        args_hint="[tasks | scout <text|task-id> | recommend [lane|board] | ladder | fight <A> vs <B> [--card id] [--lanes a,b] [--seed N] | agentic <A> vs <B> | rematch | score | status | history | export]",
+        args_hint="[tasks | scout <text|task-id> [--hard|--gauntlet] | recommend [lane|board] | ladder | fight <A> vs <B> [--card id] [--lanes a,b] [--seed N] [--hard|--gauntlet] | agentic <A> vs <B> | rematch | score | status | history | export]",
     )
 
     skills_dir = Path(__file__).parent / "skills"

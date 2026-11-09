@@ -1,0 +1,59 @@
+{
+  "status": "done",
+  "fight_id": "20261110-150000",
+  "card": {"title": "Checkout totals refactor", "lanes": ["coding", "debugging"]},
+  "fighters": {
+    "a": {"id": "stealth/crouton-alpha", "short": "Crouton"},
+    "b": {"id": "deepseek/deepseek-v4.1-flash-1017", "short": "DS-Flash"}
+  },
+  "hp": {"a": 70, "b": 40},
+  "rounds": [
+    {
+      "id": "R1", "name": "Warm-up", "points": 1, "state": "done",
+      "tasks": [
+        {"id": "coding-001", "lane": "coding", "title": "Sum cart line items",
+         "a": {"state": "done", "score": 1.0, "latency_s": 3.1, "cost_usd": 0.0002, "detail": "all cases passed"},
+         "b": {"state": "done", "score": 1.0, "latency_s": 2.4, "cost_usd": 0.0001, "detail": "all cases passed"}},
+        {"id": "coding-002", "lane": "coding", "title": "Format money column",
+         "a": {"state": "done", "score": 1.0, "latency_s": 2.8, "cost_usd": 0.0002, "detail": "writes exactly 25 words"},
+         "b": {"state": "done", "score": 0.5, "latency_s": 3.6, "cost_usd": 0.0002, "detail": "2/4 checks passed"}}
+      ]
+    },
+    {
+      "id": "R2", "name": "Main Event", "points": 2, "state": "done", "incomplete": true,
+      "tasks": [
+        {"id": "debugging-004", "lane": "debugging", "title": "Find the duplicate-keys bug",
+         "a": {"state": "done", "score": 1.0, "latency_s": 5.2, "cost_usd": 0.0004, "detail": "3/3 cases"},
+         "b": {"state": "error", "score": null, "latency_s": 12.0, "cost_usd": null, "detail": "provider timeout — round errored, excluded from points"}},
+        {"id": "coding-005", "lane": "coding", "title": "Parse ISO date column",
+         "a": {"state": "skipped", "score": null, "latency_s": null, "cost_usd": null, "detail": "not attempted: USD cap $0.0020 exceeded"},
+         "b": {"state": "skipped", "score": null, "latency_s": null, "cost_usd": null, "detail": "not attempted: USD cap $0.0020 exceeded"}},
+        {"id": "debugging-006", "lane": "debugging", "title": "Repair the retry loop",
+         "a": {"state": "skipped", "score": null, "latency_s": null, "cost_usd": null, "detail": "not attempted: USD cap $0.0020 exceeded"},
+         "b": {"state": "skipped", "score": null, "latency_s": null, "cost_usd": null, "detail": "not attempted: USD cap $0.0020 exceeded"}}
+      ]
+    }
+  ],
+  "sudden_death": null,
+  "winner": "stealth/crouton-alpha",
+  "ko": false,
+  "edge": null,
+  "incomplete": true,
+  "incomplete_rounds": ["R2"],
+  "budget": {
+    "exceeded": true,
+    "reason": "USD cap $0.0020 exceeded",
+    "cap_usd": 0.002,
+    "cap_tokens": 400000,
+    "spent_usd": 0.0023,
+    "spent_tokens": 21000
+  },
+  "budget_exceeded": true,
+  "points": {"a": 3.0, "b": 1.0},
+  "usage": {
+    "a": {"cost_usd": null, "cost_source": "unknown", "tokens": 12400, "input_tokens": 7600, "output_tokens": 4800, "latency_s": 14.3},
+    "b": {"cost_usd": 0.0011, "cost_source": "estimated", "tokens": 8600, "input_tokens": 5200, "output_tokens": 3400, "latency_s": 15.2}
+  },
+  "report_path": "reports/fight-20261110-150000.html",
+  "updated": "2026-11-10T15:00:42+00:00"
+}

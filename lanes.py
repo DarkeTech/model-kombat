@@ -19,10 +19,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 import re
 from collections import defaultdict
 from pathlib import Path
+
+#: Card intensities. ``standard`` keeps the historic R1 d1 / R2 d2 / R3 d3 mix;
+#: ``hard`` drops difficulty 1 entirely; ``gauntlet`` is all difficulty 3.
+INTENSITIES = ("standard", "hard", "gauntlet")
 
 LANES = (
     "coding",
@@ -338,15 +343,127 @@ def _normalise_lanes(lanes) -> list[dict]:
     return out or [dict(item) for item in _FALLBACK]
 
 
-def _card_id(lane_names: list[str], seed) -> str:
-    blob = json.dumps({"lanes": lane_names, "seed": str(seed)}, sort_keys=True).encode("utf-8")
+def _card_id(lane_names: list[str], seed, intensity: str = "standard") -> str:
+    blob = json.dumps(
+        {"lanes": lane_names, "seed": str(seed), "intensity": intensity}, sort_keys=True
+    ).encode("utf-8")
     return "card-" + hashlib.sha256(blob).hexdigest()[:10]
 
 
-class _Picker:
-    """Seeded, no-repeat task picker with lane/difficulty buckets."""
+# ------------------------------------------------------- task discrimination
 
-    def __init__(self, tasks: dict[str, dict], rng: random.Random):
+
+def stats_path() -> Path | None:
+    """Where ``task_stats.json`` lives (plugin data dir), or ``None`` offline."""
+    try:
+        try:
+            from . import tools as _tools
+        except ImportError:
+            import tools as _tools  # type: ignore
+
+        return Path(_tools._data_dir()) / "task_stats.json"
+    except Exception:  # noqa: BLE001 — stats are optional, never fatal
+        home = os.environ.get("HERMES_HOME")
+        if home:
+            return Path(home) / "plugin-data" / "model-kombat" / "task_stats.json"
+        return Path.home() / ".hermes" / "plugin-data" / "model-kombat" / "task_stats.json"
+
+
+def load_task_stats(path: Path | None = None) -> dict[str, dict]:
+    """Load per-task discrimination stats; ``{}`` when absent/corrupt.
+
+    Shape: ``{"tasks": {task_id: {"fights", "both_perfect", "both_zero",
+    "split", "mean_gap", "per_model"}}}``. A bare ``{task_id: {...}}`` file is
+    also accepted (tolerant read).
+    """
+    path = Path(path) if path is not None else stats_path()
+    if path is None:
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    tasks = data.get("tasks")
+    if isinstance(tasks, dict):
+        return {str(k): v for k, v in tasks.items() if isinstance(v, dict)}
+    return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+
+
+def _int_stat(stats: dict, tid: str, key: str) -> int:
+    entry = stats.get(tid)
+    if not isinstance(entry, dict):
+        return 0
+    try:
+        return int(entry.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_stat(stats: dict, tid: str, key: str) -> float:
+    entry = stats.get(tid)
+    if not isinstance(entry, dict):
+        return 0.0
+    try:
+        return float(entry.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def task_preference(tid: str, stats: dict[str, dict]) -> tuple:
+    """Sort key for the in-bucket preference (lower = picked first).
+
+    (a) never fought, (b) discriminating (most split then widest mean gap),
+    (c) lowest both-perfect ratio; saturated tasks (fights>=3, never split)
+    are demoted behind everything else.
+    """
+    entry = stats.get(tid)
+    fights = _int_stat(stats, tid, "fights")
+    if not isinstance(entry, dict) or fights <= 0:
+        return (0, 0, 0.0, 0.0)
+    both_perfect = _int_stat(stats, tid, "both_perfect")
+    if fights >= 3 and both_perfect >= fights:
+        return (3, 0, 0.0, 0.0)
+    split = _int_stat(stats, tid, "split")
+    mean_gap = _float_stat(stats, tid, "mean_gap")
+    if split > 0 or mean_gap > 0:
+        return (1, -split, -round(mean_gap, 9), 0.0)
+    return (2, round(both_perfect / fights, 9), 0.0, 0.0)
+
+
+def discrimination_level(card: dict, stats: dict[str, dict] | None = None) -> str:
+    """Share of the card's tasks whose prior fights split — low/medium/high/unknown."""
+    if stats is None:
+        stats = load_task_stats()
+    ids = [
+        str(tid)
+        for rnd in (card.get("rounds") or [])
+        for tid in (rnd.get("tasks") or [])
+    ]
+    if not ids:
+        return "unknown"
+    known = [tid for tid in ids if isinstance(stats.get(tid), dict)]
+    if not known:
+        return "unknown"
+    share = sum(1 for tid in ids if _int_stat(stats, tid, "split") > 0) / len(ids)
+    if share >= 0.5:
+        return "high"
+    if share >= 0.25:
+        return "medium"
+    return "low"
+
+
+class _Picker:
+    """Seeded, no-repeat task picker with lane/difficulty buckets.
+
+    When discrimination ``stats`` are present, each bucket is filtered to its
+    best preference tier (never fought > discriminating > least-saturated) and
+    the seed only breaks ties *within* that tier — so the card stays
+    deterministic for a given stats snapshot.
+    """
+
+    def __init__(self, tasks: dict[str, dict], rng: random.Random, stats: dict[str, dict] | None = None):
         self.buckets: dict[tuple, list[str]] = defaultdict(list)
         for tid in sorted(tasks):
             task = tasks[tid]
@@ -356,9 +473,16 @@ class _Picker:
             self.buckets[(lane, task.get("difficulty", 2))].append(tid)
         self.rng = rng
         self.used: set[str] = set()
+        self.stats = stats or {}
 
     def _available(self, lane: str, difficulty: int) -> list[str]:
-        return [tid for tid in self.buckets.get((lane, difficulty), []) if tid not in self.used]
+        ids = [tid for tid in self.buckets.get((lane, difficulty), []) if tid not in self.used]
+        if not ids or not self.stats:
+            return ids
+        tiers: dict[tuple, list[str]] = defaultdict(list)
+        for tid in ids:
+            tiers[task_preference(tid, self.stats)].append(tid)
+        return tiers[min(tiers)]
 
     def take(self, count: int, difficulties: list[int], lanes: list[str]) -> list[str]:
         picks: list[str] = []
@@ -396,6 +520,18 @@ class _Picker:
                 self.used.add(chosen)
         return picks
 
+    def available_tasks(self, lanes: list[str], difficulties: list[int]) -> list[str]:
+        """Unused tasks in lane order, first non-empty difficulty wins."""
+        for difficulty in difficulties:
+            out: list[str] = []
+            for lane in lanes:
+                for tid in self.buckets.get((lane, difficulty), []):
+                    if tid not in self.used and tid not in out:
+                        out.append(tid)
+            if out:
+                return out
+        return []
+
     def any_unused(self, lanes: list[str]) -> str | None:
         for lane in lanes:
             for difficulty in (3, 2, 1):
@@ -416,18 +552,66 @@ class _Picker:
         return self.rng.choice(candidates) if candidates else None
 
 
-def build_card(lanes, seed, extra_tasks=None, pool: dict[str, dict] | None = None) -> dict:
+def _pick_sudden_death(
+    picker: _Picker,
+    lanes: list[str],
+    stats: dict[str, dict],
+    difficulties: tuple[int, ...] = (3,),
+) -> str | None:
+    """Highest-discrimination task (stats, else seeded random) not on the card."""
+    candidates = picker.available_tasks(lanes, list(difficulties))
+    if not candidates:
+        return None
+    scored = [tid for tid in candidates if isinstance(stats.get(tid), dict)]
+    if scored:
+        def rank(tid: str) -> tuple:
+            return (
+                _int_stat(stats, tid, "split"),
+                round(_float_stat(stats, tid, "mean_gap"), 9),
+            )
+
+        best = max(rank(tid) for tid in scored)
+        if best > (0, 0.0):
+            candidates = [tid for tid in scored if rank(tid) == best]
+    chosen = picker.rng.choice(candidates)
+    picker.used.add(chosen)
+    return chosen
+
+
+def _coerce_intensity(value) -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in INTENSITIES else "standard"
+
+
+def build_card(
+    lanes,
+    seed,
+    extra_tasks=None,
+    pool: dict[str, dict] | None = None,
+    intensity: str = "standard",
+    stats: dict[str, dict] | None = None,
+) -> dict:
     """Build a deterministic fight card from classified lanes (SPEC §4.2).
 
     ``lanes`` is the classifier output (``[{"lane","weight"}]``) or a list of
     lane names. ``seed`` fixes every random choice. ``extra_tasks`` are project
     tasks mixed into their lane's Main Event round. ``pool`` overrides the
-    loaded task pool (tests / callers with their own source).
+    loaded task pool (tests / callers with their own source). ``intensity`` is
+    ``standard`` (historic d1/d2/d3 mix), ``hard`` (d2/d3 only) or ``gauntlet``
+    (all difficulty 3). ``stats`` is the task-discrimination snapshot; when
+    omitted it is read from ``task_stats.json`` in the plugin data dir.
+
+    Determinism: identical (lanes, seed, intensity, stats snapshot) always
+    yields an identical card (``stats_used`` reports whether stats were read).
     """
+    intensity = _coerce_intensity(intensity)
     lane_items = _normalise_lanes(lanes)
     lane_names = [item["lane"] for item in lane_items]
 
     tasks = dict(pool) if pool is not None else load_task_pool()
+    if stats is None:
+        stats = load_task_stats()
+    stats_used = bool(stats)
     extras: dict[str, dict] = {}
     for task in extra_tasks or []:
         if not isinstance(task, dict):
@@ -452,53 +636,89 @@ def build_card(lanes, seed, extra_tasks=None, pool: dict[str, dict] | None = Non
         tasks.setdefault(tid, task)
 
     rng = random.Random(f"kombat:{seed}")
-    picker = _Picker(tasks, rng)
+    picker = _Picker(tasks, rng, stats)
     top = lane_names[:3]
     top2 = lane_names[:2]
 
-    # R1 Warm-up (1pt): 2 difficulty-1 tasks from the top lanes.
-    r1 = picker.take(2, [1], top)
-    if len(r1) < 2:
-        r1 += picker.take(2 - len(r1), [2], top)
-    if len(r1) < 2:
-        r1 += picker.take(2 - len(r1), [1, 2, 3], lane_names)
+    if intensity == "gauntlet":
+        # Every task difficulty 3: R1 2, R2 3, R3 3.
+        r1 = picker.take(2, [3], top)
+        if len(r1) < 2:
+            r1 += picker.take(2 - len(r1), [3, 2, 1], lane_names)
+        r2 = picker.take(3, [3], top2)
+        if len(r2) < 3:
+            r2 += picker.take(3 - len(r2), [3, 2, 1], lane_names)
+        r3 = picker.take(3, [3], top)
+        if len(r3) < 3:
+            r3 += picker.take(3 - len(r3), [3, 2, 1], lane_names)
+    elif intensity == "hard":
+        # No difficulty 1: R1 d2, R2 d3, R3 d3.
+        r1 = picker.take(2, [2], top)
+        if len(r1) < 2:
+            r1 += picker.take(2 - len(r1), [2, 3], top2)
+        if len(r1) < 2:
+            r1 += picker.take(2 - len(r1), [2, 3], lane_names)
 
-    # R2 Main Event (2pt): 2–3 difficulty-2 tasks spread over the top 2 lanes,
-    # with project tasks mixed in at their lane.
-    enough_d2 = sum(1 for lane in top2 if picker._available(lane, 2))
-    target = 3 if len(top2) >= 2 and enough_d2 >= 2 else 2
-    r2 = picker.take_extra(target, top2, extras)
-    if len(r2) < target:
-        r2 += picker.take(target - len(r2), [2], top2)
-    if len(r2) < 2:
-        r2 += picker.take(2 - len(r2), [2, 1, 3], lane_names)
+        enough_d3 = sum(1 for lane in top2 if picker._available(lane, 3))
+        target = 3 if len(top2) >= 2 and enough_d3 >= 2 else 2
+        r2 = picker.take(target, [3], top2)
+        if len(r2) < target:
+            r2 += picker.take(target - len(r2), [3, 2], lane_names)
 
-    # R3 Championship (3pt): 1–2 difficulty-3 tasks from the top lane, weighted
-    # toward coding/sql when they are on the card.
-    preferred = [lane for lane in top if lane in ("coding", "sql")] + [
-        lane for lane in lane_names if lane not in ("coding", "sql")
-    ]
-    available_d3 = sum(len(picker._available(lane, 3)) for lane in preferred)
-    r3_count = 2 if available_d3 >= 2 else 1
-    r3 = picker.take(r3_count, [3], preferred)
-    if not r3:
-        r3 = picker.take(r3_count, [2, 3], preferred)
+        r3 = picker.take(2, [3], top)
+        if len(r3) < 2:
+            r3 += picker.take(2 - len(r3), [3, 2], lane_names)
+        if not r3:
+            r3 = picker.take(1, [3, 2], lane_names)
+    else:
+        # R1 Warm-up (1pt): 2 difficulty-1 tasks from the top lanes.
+        r1 = picker.take(2, [1], top)
+        if len(r1) < 2:
+            r1 += picker.take(2 - len(r1), [2], top)
+        if len(r1) < 2:
+            r1 += picker.take(2 - len(r1), [1, 2, 3], lane_names)
 
-    # Sudden death: one difficulty-2/3 task from the top lane (widen only if
-    # that lane has nothing left).
+        # R2 Main Event (2pt): 2–3 difficulty-2 tasks spread over the top 2 lanes,
+        # with project tasks mixed in at their lane.
+        enough_d2 = sum(1 for lane in top2 if picker._available(lane, 2))
+        target = 3 if len(top2) >= 2 and enough_d2 >= 2 else 2
+        r2 = picker.take_extra(target, top2, extras)
+        if len(r2) < target:
+            r2 += picker.take(target - len(r2), [2], top2)
+        if len(r2) < 2:
+            r2 += picker.take(2 - len(r2), [2, 1, 3], lane_names)
+
+        # R3 Championship (3pt): 1–2 difficulty-3 tasks from the top lane, weighted
+        # toward coding/sql when they are on the card.
+        preferred = [lane for lane in top if lane in ("coding", "sql")] + [
+            lane for lane in lane_names if lane not in ("coding", "sql")
+        ]
+        available_d3 = sum(len(picker._available(lane, 3)) for lane in preferred)
+        r3_count = 2 if available_d3 >= 2 else 1
+        r3 = picker.take(r3_count, [3], preferred)
+        if not r3:
+            r3 = picker.take(r3_count, [2, 3], preferred)
+
+    # Sudden death: highest-discrimination difficulty-3 task not already on the
+    # card; ties (or no stats) are broken by the seed.
     all_lanes = sorted({lane for lane, _ in picker.buckets})
-    sudden = picker.take(1, [3, 2], top[:1]) or picker.take(1, [3, 2], top)
+    sd_lanes = list(dict.fromkeys(top[:1] + top + lane_names))
+    sd_difficulties = (3,) if intensity in ("hard", "gauntlet") else (3, 2)
+    sudden = _pick_sudden_death(picker, sd_lanes, stats, sd_difficulties)
+    if not sudden:
+        sudden = _pick_sudden_death(picker, all_lanes, stats, sd_difficulties)
     if not sudden:
         fallback = (picker.any_unused(lane_names) or picker.any_task(lane_names)
                     or picker.any_unused(all_lanes) or picker.any_task(all_lanes))
-        sudden = [fallback] if fallback else []
+        sudden = fallback
 
     # Partial pool (e.g. a lane's file has not landed yet): fill any short round
     # from other lanes rather than shipping an empty round. Preferences above
     # still win whenever the requested lane has tasks.
-    for tasks_out, difficulty, wanted in ((r1, 1, 2), (r2, 2, 2), (r3, 3, 1)):
-        if len(tasks_out) < wanted:
-            tasks_out += picker.take(wanted - len(tasks_out), [difficulty, 2, 1, 3], all_lanes)
+    if intensity == "standard":
+        for tasks_out, difficulty, wanted in ((r1, 1, 2), (r2, 2, 2), (r3, 3, 1)):
+            if len(tasks_out) < wanted:
+                tasks_out += picker.take(wanted - len(tasks_out), [difficulty, 2, 1, 3], all_lanes)
 
     rounds = [
         {"id": "R1", "name": "Warm-up", "points": 1, "tasks": r1},
@@ -507,11 +727,14 @@ def build_card(lanes, seed, extra_tasks=None, pool: dict[str, dict] | None = Non
     ]
 
     return {
-        "id": _card_id(lane_names, seed),
+        "id": _card_id(lane_names, seed, intensity),
         "title": "Kombat card — " + " · ".join(lane_names),
         "lanes": lane_names,
         "lane_weights": lane_items,
         "seed": seed,
+        "intensity": intensity,
+        "stats_used": stats_used,
         "rounds": rounds,
-        "sudden_death_task": sudden[0] if sudden else None,
+        "sudden_death_task": sudden if sudden else None,
     }
+

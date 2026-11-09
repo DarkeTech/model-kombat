@@ -111,6 +111,48 @@ def recommendations():
         return {}
 
 
+@router.get("/cards")
+def cards():
+    """List stored fight cards: [{id, title, lanes}] from cards.json.
+
+    cards.json is normally ``{card_id: card}`` (tools._store_card); a bare
+    list of cards is also accepted. Missing/corrupt/non-card data yields [].
+    Never raises.
+    """
+    try:
+        data = _read_json("cards.json")
+        entries = []
+        if isinstance(data, dict):
+            entries = [(key, value) for key, value in data.items()]
+        elif isinstance(data, list):
+            entries = [(None, value) for value in data]
+        out = []
+        for key, card in entries:
+            if not isinstance(card, dict):
+                continue
+            card_id = card.get("id") or key
+            if not card_id:
+                continue
+            lanes = card.get("lanes")
+            if not isinstance(lanes, list):
+                weights = card.get("lane_weights")
+                lanes = (
+                    [w.get("lane") for w in weights if isinstance(w, dict) and w.get("lane")]
+                    if isinstance(weights, list)
+                    else []
+                )
+            out.append(
+                {
+                    "id": str(card_id),
+                    "title": str(card.get("title") or ""),
+                    "lanes": [str(lane) for lane in lanes if lane],
+                }
+            )
+        return out
+    except Exception:
+        return []
+
+
 @router.get("/health")
 def health():
     try:

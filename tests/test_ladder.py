@@ -210,17 +210,18 @@ def test_confidence_rules():
         assert ladder.recommend(data_dir, "coding")["confidence"] == "low"
 
         for fights, margin, expected, lowered in [
-            (4, 40.0, "medium", "low"),
+            (4, 40.0, "medium", "medium"),
             (4, 10.0, "low", "low"),
-            (9, 40.0, "high", "medium"),
-            (9, 10.0, "medium", "medium"),
+            (9, 40.0, "high", "high"),
+            (9, 10.0, "low", "low"),  # margin < 15 is always low, regardless of fights
             (9, 15.0, "high", "high"),  # margin == 15 is not a downgrade
         ]:
             lanes["coding"]["models"]["a/x"] = _model(elo=1500 + margin, fights=fights, points=10, cost=1)
             lanes["coding"]["models"]["b/y"] = _model(elo=1500, fights=fights, points=4, cost=1)
             _write_ladder(data_dir, lanes)
-            got = ladder.recommend(data_dir, "coding")["confidence"]
-            assert got == expected, (fights, margin, got, expected)
+            out = ladder.recommend(data_dir, "coding")
+            assert out["confidence"] == expected, (fights, margin, out["confidence"], expected)
+            assert out["verdict"] == ("no clear edge" if margin < 15 else "clear edge"), out
 
 
 def test_confidence_margin_downgrade_uses_real_margin():
@@ -239,7 +240,10 @@ def test_confidence_margin_downgrade_uses_real_margin():
         )
         out = ladder.recommend(data_dir, "coding")
         assert out["margin"] == 10.0
-        assert out["confidence"] == "medium"  # high downgraded once
+        assert out["confidence"] == "low"  # margin < 15 is always low
+        assert out["verdict"] == "no clear edge"
+        assert "efficiency tiebreak" in out["why"]
+        assert "not a performance win" in out["why"]
 
 
 def test_no_data_recommend():

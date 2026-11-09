@@ -18,8 +18,11 @@ KOMBAT_SCOUT = {
         "death) from those lanes. Pass free text, or {\"card\": \"<kanban task id>\"} to "
         "scout a kanban card, or {\"board\": true} for all open cards on the active board. "
         "Classification is local keyword/regex rules — no LLM call. Use before "
-        "kombat_run_fight to tailor the fight to real work; identical input + seed always "
-        "yields the identical card."
+        "kombat_run_fight to tailor the fight to real work; identical input + seed + "
+        "intensity + task-stats snapshot always yields the identical card. `intensity` "
+        "picks the difficulty mix: standard (d1/d2/d3), hard (d2/d3, no d1) or gauntlet "
+        "(every task d3). Returns the card plus `expected_discrimination` "
+        "(low/medium/high/unknown) from prior per-task split history."
     ),
     "parameters": {
         "type": "object",
@@ -39,6 +42,11 @@ KOMBAT_SCOUT = {
             "seed": {
                 "type": "integer",
                 "description": "Optional card seed. Default derives from the input text, so the same input gives the same card.",
+            },
+            "intensity": {
+                "type": "string",
+                "enum": ["standard", "hard", "gauntlet"],
+                "description": "Difficulty mix: standard = d1/d2/d3, hard = d2/d3 (no d1), gauntlet = every task d3. Default from the default_intensity setting (standard).",
             },
             "persist": {
                 "type": "boolean",
@@ -60,6 +68,8 @@ KOMBAT_RUN_FIGHT = {
         "(task, fighter) pairs are retried a bounded number of times; exhausted pairs are "
         "reported as errored (never failed). Requires llm.model_override enabled for this "
         "plugin. Sudden death is fetched up front and only scored on a points tie. "
+        "`intensity` (standard/hard/gauntlet) applies when `card` is a {\"lanes\": ...} "
+        "spec: hard drops difficulty 1, gauntlet fights only difficulty 3. "
         "Enforces a USD and token spend budget, prices tokens when the host gives no cost "
         "(unknown models are 'n/a', never $0), and drives the kanban scoreboard and live state."
     ),
@@ -70,7 +80,12 @@ KOMBAT_RUN_FIGHT = {
             "fighter_b": {"type": "string", "description": "Second model ID, e.g. deepseek/deepseek-v4.1-flash-1017"},
             "card": {
                 "type": "object",
-                "description": "Fight card from kombat_scout (object), {\"lanes\":[...],\"seed\":n}, or {\"id\":\"card-...\"}. A stored card id string is also accepted. Omit for the legacy fixed suite.",
+                "description": "Fight card from kombat_scout (object), {\"lanes\":[...],\"seed\":n,\"intensity\":\"hard\"}, or {\"id\":\"card-...\"}. A stored card id string is also accepted. Omit for the legacy fixed suite.",
+            },
+            "intensity": {
+                "type": "string",
+                "enum": ["standard", "hard", "gauntlet"],
+                "description": "Difficulty mix used when `card` is a lanes spec: standard (d1/d2/d3), hard (d2/d3, no d1), gauntlet (every task d3). Default from the default_intensity setting (standard). Ignored for stored/full cards.",
             },
             "tasks": {
                 "type": "array",

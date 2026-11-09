@@ -161,11 +161,13 @@ def _coerce_seed(value, default=0):
         return default
 
 
-def _coerce_card(value):
+def _coerce_card(value, intensity: str | None = None):
     """Resolve a card argument: stored card id, scouted card object, or a spec.
 
     Returns ``(card, error)``. ``None`` card means "no card given" (legacy
     suite); an error string means the caller asked for a card we cannot find.
+    ``intensity`` applies only when building a card from a ``{"lanes": ...}``
+    spec (a stored/complete card keeps the intensity it was built with).
     """
     if value is None or value == "":
         return None, None
@@ -173,7 +175,7 @@ def _coerce_card(value):
         cid = value.strip()
         if cid.startswith("{"):
             try:
-                return _coerce_card(json.loads(cid))
+                return _coerce_card(json.loads(cid), intensity)
             except (json.JSONDecodeError, TypeError):
                 pass
         data = _read_json_file(_cards_path(), {})
@@ -184,13 +186,13 @@ def _coerce_card(value):
     if isinstance(value, dict):
         nested = value.get("card")
         if isinstance(nested, dict):
-            return _coerce_card(nested)
+            return _coerce_card(nested, intensity)
         if isinstance(nested, str) and not value.get("rounds"):
-            return _coerce_card(nested)
+            return _coerce_card(nested, intensity)
         if isinstance(value.get("rounds"), list) and value["rounds"]:
             return value, None
         if isinstance(value.get("id"), str) and not value.get("lanes"):
-            return _coerce_card(value["id"])
+            return _coerce_card(value["id"], intensity)
         lanes_spec = value.get("lanes")
         if isinstance(lanes_spec, (list, dict)):
             try:
@@ -198,6 +200,7 @@ def _coerce_card(value):
                     lanes_spec,
                     _coerce_seed(value.get("seed"), 0),
                     extra_tasks=value.get("project_tasks") if isinstance(value.get("project_tasks"), list) else None,
+                    intensity=_intensity(value.get("intensity") or intensity),
                 )
             except Exception as exc:  # noqa: BLE001 — bad card spec degrades
                 return None, f"could not build card from given lanes: {exc}"
@@ -265,7 +268,7 @@ def _fight_plan(args: dict, suite: dict) -> tuple[dict | None, str | None]:
     card_arg = args.get("card")
     if card_arg is None and isinstance(args.get("input"), dict):
         card_arg = args["input"].get("card")
-    card, err = _coerce_card(card_arg)
+    card, err = _coerce_card(card_arg, _intensity(args.get("intensity")))
     if err:
         return None, err
     if card:
@@ -520,6 +523,123 @@ def _cfg(key: str, default=None):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ------------------------------------------------- task discrimination memory
+
+INTENSITIES = ("standard", "hard", "gauntlet")
+TASK_STATS_CAP = 500
+
+
+def _intensity(value=None) -> str:
+    """Resolve an intensity argument, falling back to the ``default_intensity`` setting."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        raw = str(_cfg("default_intensity", "standard") or "standard").strip().lower()
+    return raw if raw in INTENSITIES else "standard"
+
+
+def _task_stats_path() -> Path:
+    return _data_dir() / "task_stats.json"
+
+
+def _load_task_stats() -> dict[str, dict]:
+    """Per-task discrimination stats (``{}`` when none recorded yet)."""
+    try:
+        return _lanes_module().load_task_stats(_task_stats_path())
+    except Exception:  # noqa: BLE001 — optional memory
+        return {}
+
+
+def _update_task_stats(record: dict) -> bool:
+    """Fold one scored fight into ``task_stats.json`` (atomic, idempotent per fight_id).
+
+    Per task id: ``fights``, ``both_perfect``, ``both_zero``, ``split``,
+    ``mean_gap`` (mean |scoreA-scoreB| over scored pairs) and ``per_model``
+    (``{model_id: {"n", "mean"}}``). A fight is applied at most once; the
+    applied-id list is capped at 500.
+    """
+    path = _task_stats_path()
+    data = _read_json_file(path, {})
+    if not isinstance(data, dict):
+        data = {}
+    raw_stats = data.get("tasks")
+    stats: dict = raw_stats if isinstance(raw_stats, dict) else {}
+    raw_applied = data.get("applied")
+    applied: list[str] = [str(x) for x in raw_applied] if isinstance(raw_applied, list) else []
+    fight_id = str(record.get("fight_id") or "").strip()
+    if fight_id and fight_id in applied:
+        return False
+
+    fighters = {
+        "a": str(record.get("fighter_a") or ""),
+        "b": str(record.get("fighter_b") or ""),
+    }
+
+    def _num(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    for rnd in record.get("rounds") or []:
+        if not isinstance(rnd, dict):
+            continue
+        for task in rnd.get("tasks") or []:
+            if not isinstance(task, dict) or task.get("excluded"):
+                continue
+            fa, fb = _num(task.get("a_fraction")), _num(task.get("b_fraction"))
+            if fa is None or fb is None:
+                continue
+            tid = str(task.get("id") or "").strip()
+            if not tid:
+                continue
+            raw_entry = stats.get(tid)
+            entry: dict = raw_entry if isinstance(raw_entry, dict) else {}
+            prev = 0
+            try:
+                prev = int(entry.get("fights") or 0)
+            except (TypeError, ValueError):
+                prev = 0
+            gap = abs(fa - fb)
+            try:
+                mean_gap = float(entry.get("mean_gap") or 0.0)
+            except (TypeError, ValueError):
+                mean_gap = 0.0
+            entry["mean_gap"] = round((mean_gap * prev + gap) / (prev + 1), 6)
+            entry["fights"] = prev + 1
+            entry["both_perfect"] = int(entry.get("both_perfect") or 0) + int(fa >= 1.0 and fb >= 1.0)
+            entry["both_zero"] = int(entry.get("both_zero") or 0) + int(fa <= 0.0 and fb <= 0.0)
+            entry["split"] = int(entry.get("split") or 0) + int(fa != fb)
+
+            raw_per_model = entry.get("per_model")
+            per_model: dict = raw_per_model if isinstance(raw_per_model, dict) else {}
+            for side, score in (("a", fa), ("b", fb)):
+                model = fighters[side]
+                if not model:
+                    continue
+                raw_slot = per_model.get(model)
+                slot: dict = raw_slot if isinstance(raw_slot, dict) else {}
+                try:
+                    n = int(slot.get("n") or 0)
+                except (TypeError, ValueError):
+                    n = 0
+                try:
+                    mean = float(slot.get("mean") or 0.0)
+                except (TypeError, ValueError):
+                    mean = 0.0
+                slot["n"] = n + 1
+                slot["mean"] = round((mean * n + score) / (n + 1), 6)
+                per_model[model] = slot
+            entry["per_model"] = per_model
+            stats[tid] = entry
+
+    if fight_id:
+        applied.append(fight_id)
+    data["tasks"] = stats
+    data["applied"] = applied[-TASK_STATS_CAP:]
+    data["updated"] = _now_iso()
+    _write_json_atomic(path, data)
+    return True
 
 
 # ------------------------------------------------------------- pricing / cost
@@ -815,9 +935,16 @@ def kombat_scout(args: dict, **kwargs) -> str:
 
         seed = int(hashlib.sha1(combined.encode("utf-8")).hexdigest()[:8], 16)
 
+    intensity = _intensity(args.get("intensity"))
+    stats = _load_task_stats()
     try:
         extra = args.get("project_tasks")
-        card = _ln.build_card(classified, seed, extra_tasks=extra if isinstance(extra, list) else None)
+        card = _ln.build_card(
+            classified, seed,
+            extra_tasks=extra if isinstance(extra, list) else None,
+            intensity=intensity,
+            stats=stats,
+        )
     except Exception as exc:
         return _err(f"failed to build fight card: {type(exc).__name__}: {exc}")
     # Persist by default so kombat_run_fight can accept the card id later.
@@ -825,9 +952,11 @@ def kombat_scout(args: dict, **kwargs) -> str:
     if args.get("persist", True) is not False:
         _store_card(card)
 
+    expected = _ln.discrimination_level(card, stats)
     reasons = [
         "classified lanes: "
-        + ", ".join(f"{item['lane']} ({item['weight']})" for item in classified)
+        + ", ".join(f"{item['lane']} ({item['weight']})" for item in classified),
+        f"intensity: {intensity} (expected discrimination: {expected})",
     ]
     for rnd in card["rounds"]:
         tasks = rnd["tasks"]
@@ -848,6 +977,9 @@ def kombat_scout(args: dict, **kwargs) -> str:
         input=combined[:2000],
         lanes=classified,
         card=card,
+        intensity=intensity,
+        stats_used=bool(card.get("stats_used")),
+        expected_discrimination=expected,
         reasons=reasons,
         kanban=kanban_info,
         warnings=warnings,
@@ -1372,6 +1504,7 @@ def kombat_run_fight(args: dict, **kwargs) -> str:
         fighters=[fighter_a, fighter_b],
         card=card,
         mode=plan["mode"],
+        intensity=(card or {}).get("intensity"),
         rounds=[tid for rnd in plan["rounds"] for tid in rnd["tasks"]],
         answers_a=answers[fighter_a],
         answers_b=answers[fighter_b],
@@ -2319,6 +2452,10 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         ],
     }
     _append_history(record)
+    try:
+        stats_updated = _update_task_stats(record)
+    except Exception:  # noqa: BLE001 — discrimination memory is additive
+        stats_updated = False
 
     # Ladder: per-lane Elo bouts (lazy import so a missing module never breaks scoring).
     ladder_result = None
@@ -2404,6 +2541,7 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         flag="*" if incomplete_rounds else "",
         ladder=ladder_result,
         ladder_error=ladder_error,
+        task_stats_updated=stats_updated,
         kanban=kanban_note,
     )
 
@@ -2495,14 +2633,17 @@ def _card_lane_weights(card: dict) -> list[dict]:
 def _recommend_card(card: dict, candidates=None) -> dict:
     """Per-lane picks plus one overall pick for a scout card.
 
-    Overall pick = the model with the highest **summed weighted Elo margin**,
-    ``sum(lane_weight * elo(model, lane))`` over the card's lanes; lanes the
-    model has no Elo in contribute nothing. Documented in the tool schema too.
+    Overall pick = the model with the highest **weighted average lane Elo**,
+    ``sum(lane_weight * elo(model, lane)) / sum(lane_weight)`` over the lanes
+    the model has Elo in. A margin under 15 Elo is not a performance win: the
+    pick is labelled ``verdict: "no clear edge"``, confidence is forced low,
+    and ``why`` says it is an efficiency (latency/cost) tiebreak.
     """
     weights = _card_lane_weights(card)
     per_lane: list[dict] = []
     warnings: list[str] = []
     weighted: dict[str, float] = {}
+    weight_totals: dict[str, float] = {}
     contributions: dict[str, dict] = {}
     for item in weights:
         lane, weight = item["lane"], item["weight"]
@@ -2531,15 +2672,28 @@ def _recommend_card(card: dict, candidates=None) -> dict:
             if not isinstance(elo, (int, float)) or isinstance(elo, bool):
                 continue
             weighted[model] = round(weighted.get(model, 0.0) + weight * float(elo), 6)
+            weight_totals[model] = round(weight_totals.get(model, 0.0) + weight, 6)
             contributions.setdefault(model, {})[lane] = round(weight * float(elo), 6)
+        lane_margin = rec.get("margin")
+        lane_verdict = rec.get("verdict")
+        if not lane_verdict:
+            lane_verdict = (
+                "no clear edge"
+                if isinstance(lane_margin, (int, float)) and not isinstance(lane_margin, bool) and lane_margin < 15
+                else "clear edge"
+            )
+        lane_short = _short_name(pick) if pick else None
+        if lane_short and lane_verdict == "no clear edge":
+            lane_short = "≈" + lane_short
         per_lane.append(
             {
                 "lane": lane,
                 "weight": weight,
                 "pick": pick,
-                "short": _short_name(pick) if pick else None,
+                "short": lane_short,
                 "elo": pick_elo,
-                "margin": rec.get("margin"),
+                "margin": lane_margin,
+                "verdict": lane_verdict,
                 "confidence": rec.get("confidence") or "none",
                 "fights": rec.get("fights"),
                 "cost_per_point": rec.get("cost_per_point"),
@@ -2549,22 +2703,43 @@ def _recommend_card(card: dict, candidates=None) -> dict:
             }
         )
 
-    ranked = sorted(
-        weighted.items(),
-        key=lambda kv: (-kv[1], kv[0]),
-    )
+    averages = {
+        model: (total / weight_totals[model])
+        for model, total in weighted.items()
+        if weight_totals.get(model)
+    }
+    ranked = sorted(averages.items(), key=lambda kv: (-kv[1], kv[0]))
     overall = None
     if ranked:
-        pick, score = ranked[0]
-        runner_score = ranked[1][1] if len(ranked) > 1 else None
+        pick, weighted_elo = ranked[0]
+        runner_up = ranked[1][0] if len(ranked) > 1 else None
+        margin = round(weighted_elo - ranked[1][1], 2) if len(ranked) > 1 else 0.0
+        no_edge = margin < 15
+        short = _short_name(pick)
+        pick_short = ("≈" + short) if no_edge else short
+        runner_short = _short_name(runner_up) if runner_up else None
+        if no_edge:
+            why = (
+                f"{pick_short} and {runner_short} are within {margin:.1f} Elo "
+                "— this is an efficiency tiebreak (latency/cost), not a performance win."
+                if runner_up else
+                f"{pick_short} has no runner-up on this card's lanes — efficiency tiebreak, not a performance win."
+            )
+        else:
+            why = (
+                f"{pick_short} has the highest weighted average lane Elo "
+                f"({weighted_elo:.1f}) across this card's lanes."
+            )
         overall = {
             "pick": pick,
-            "short": _short_name(pick),
-            "score": round(score, 6),
-            "margin": round(score - runner_score, 6) if runner_score is not None else 0.0,
-            "runner_up": ranked[1][0] if len(ranked) > 1 else None,
+            "short": pick_short,
+            "weighted_elo": round(weighted_elo, 2),
+            "margin": margin,
+            "verdict": "no clear edge" if no_edge else "clear edge",
+            "runner_up": runner_up,
             "per_lane": contributions.get(pick, {}),
-            "confidence": "low" if len(ranked) < 2 else "medium",
+            "confidence": "low" if (len(ranked) < 2 or no_edge) else "medium",
+            "why": why,
         }
         if len(ranked) < 2:
             warnings.append("overall pick has no runner-up (ladder thin on this card's lanes)")
@@ -2575,7 +2750,8 @@ def _recommend_card(card: dict, candidates=None) -> dict:
         "overall": overall,
         "warnings": warnings,
         "method": (
-            "overall = argmax_model sum(lane_weight * elo(model, lane)) across the card's lanes"
+            "overall = argmax_model sum(lane_weight * elo(model, lane)) / sum(lane_weight) "
+            "— a weighted average lane Elo across the card's lanes"
         ),
     }
 
@@ -2617,11 +2793,23 @@ def kombat_recommend(args: dict, **kwargs) -> str:
             if not pick:
                 warnings.append(f"no pick for card {cid} lane {lane}")
                 continue
+            margin = rec.get("margin")
+            verdict = rec.get("verdict")
+            if not verdict:
+                verdict = (
+                    "no clear edge"
+                    if isinstance(margin, (int, float)) and not isinstance(margin, bool) and margin < 15
+                    else "clear edge"
+                )
+            short = _short_name(pick)
+            if verdict == "no clear edge":
+                short = "≈" + short
             entry = {
                 "lane": lane,
                 "pick": pick,
-                "short": _short_name(pick),
-                "confidence": rec.get("confidence") or "low",
+                "short": short,
+                "verdict": verdict,
+                "confidence": "low" if verdict == "no clear edge" else (rec.get("confidence") or "low"),
                 "elo": rec.get("elo") if rec.get("elo") is not None else _elo_for(lane, pick),
                 "updated": _now_iso(),
             }
@@ -2652,14 +2840,18 @@ def kombat_recommend(args: dict, **kwargs) -> str:
                 "mode": "card",
                 "card_id": card.get("id"),
                 "title": card.get("title"),
+                "intensity": card.get("intensity"),
                 "lanes": card.get("lanes") or [w["lane"] for w in _card_lane_weights(card)],
                 "lane_weights": _card_lane_weights(card),
                 "per_lane": result["per_lane"],
                 "overall": overall or None,
                 "pick": overall.get("pick"),
                 "short": overall.get("short"),
+                "weighted_elo": overall.get("weighted_elo"),
                 "margin": overall.get("margin"),
+                "verdict": overall.get("verdict"),
                 "confidence": overall.get("confidence") or "none",
+                "why": overall.get("why"),
                 "method": result["method"],
                 "warnings": result["warnings"],
                 "cost_per_point": None,
@@ -2671,10 +2863,6 @@ def kombat_recommend(args: dict, **kwargs) -> str:
                     None,
                 )
                 if lane_view:
-                    payload["why"] = (
-                        f"{overall['short']} has the highest summed weighted Elo margin "
-                        f"({overall['score']:.1f}) across this card's lanes."
-                    )
                     payload["cost_per_point"] = lane_view.get("cost_per_point")
                     payload["cost_per_point_display"] = (
                         lane_view.get("cost_per_point_display") or "n/a"
