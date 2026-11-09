@@ -79,12 +79,14 @@ class Scoreboard:
             self.errors.append(out[:300])
         return ok, out
 
-    def start(self) -> None:
+    def start(self, round_ids: list | None = None, title_prefix: str = "FIGHT") -> None:
         self._run(_cli("boards", "create", BOARD))  # tolerate "exists"
         # No parent/child links: kanban gates children on parents, which would
         # deadlock round completion (rounds must finish before the fight card).
         # Cards group visually by title + creation time instead.
         for rnd in self.suite["rounds"]:
+            if round_ids is not None and rnd["id"] not in round_ids:
+                continue
             title = f"{rnd['id']} — {rnd['name']} ({rnd['points']} pt/task)"
             body = "Tasks: " + ", ".join(rnd["tasks"]) + f"\nFighters: {self.fighter_a} vs {self.fighter_b}"
             ok, out = self._run(
@@ -92,7 +94,7 @@ class Scoreboard:
             )
             data = _extract_json(out) if ok else None
             self.ids["rounds"][rnd["id"]] = (data or {}).get("id")
-        parent_title = f"FIGHT: {self.fighter_a} vs {self.fighter_b}"
+        parent_title = f"{title_prefix}: {self.fighter_a} vs {self.fighter_b}"
         ok, out = self._run(
             _cli("--board", BOARD, "create", parent_title,
                  "--body", "Model Kombat live scoreboard. Display only — cards are unassigned and never dispatched.",
@@ -111,6 +113,11 @@ class Scoreboard:
             self._run(_cli("--board", BOARD, "comment", self.ids["parent"],
                            "Fight aborted: host refused the model override."))
 
+    def _card_done(self, card: str) -> bool:
+        ok, out = _dispatch(_cli("--board", BOARD, "show", card, "--json"))
+        data = _extract_json(out) if ok else None
+        return bool(data and (data.get("task") or {}).get("status") == "done")
+
     def finish(self, rounds_out, winner: str, report_path) -> None:
         scored_ids = {r["id"] for r in rounds_out}
         for rnd in rounds_out:
@@ -127,21 +134,28 @@ class Scoreboard:
                 )
             text = "Round scored:\n" + "\n".join(lines)
             self._run(_cli("--board", BOARD, "comment", card, text))
+            if self._card_done(card):
+                continue  # re-score of a finished bout: comment only, no state change
             self._run(_cli("--board", BOARD, "request-review", card))
             self._run(_cli("--board", BOARD, "complete", card, "--result", text[:500]))
         # Close any round card this bout didn't fight (subset fights).
         for round_id, card in self.ids["rounds"].items():
-            if card and round_id not in scored_ids:
+            if card and round_id not in scored_ids and not self._card_done(card):
                 self._run(_cli("--board", BOARD, "comment", card, "Not fought in this bout."))
                 self._run(_cli("--board", BOARD, "complete", card, "--result", "Not fought in this bout."))
         if self.ids["parent"]:
+            # Attach works even on done cards; complete only if not already done.
             if report_path and not str(report_path).startswith("report render failed"):
                 self._run(_cli("--board", BOARD, "attach", self.ids["parent"], str(report_path)))
-            self._run(
-                _cli("--board", BOARD, "complete", self.ids["parent"],
-                     "--result", f"Winner: {winner}", "--metadata",
-                     json.dumps({"winner": winner, "report": str(report_path)}))
-            )
+            if not self._card_done(self.ids["parent"]):
+                self._run(
+                    _cli("--board", BOARD, "complete", self.ids["parent"],
+                         "--result", f"Winner: {winner}", "--metadata",
+                         json.dumps({"winner": winner, "report": str(report_path)}))
+                )
+            else:
+                self._run(_cli("--board", BOARD, "comment", self.ids["parent"],
+                               f"Re-scored. Winner: {winner}. Report: {report_path}"))
 
 
 def finish_rounds(ids: dict, rounds_out, fighter_a: str, fighter_b: str, winner: str, report_path) -> str:

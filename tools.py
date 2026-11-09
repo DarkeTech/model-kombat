@@ -414,20 +414,43 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
     except Exception:
         pass
 
-    # Best-effort kanban note on the fight card.
+    # Best-effort kanban: a rematch is a NEW bout on the board (the original
+    # cards are already done and can't be re-completed), so post fresh cards
+    # for the affected rounds and point last_fight at them for scoring.
     kanban_note = None
     try:
         from . import kanban as _kb
 
-        ids = last.get("kanban")
-        if ids and ids.get("parent"):
-            ok, out = _kb._dispatch(
-                _kb._cli("--board", _kb.BOARD, "comment", ids["parent"],
-                         f"Rematch: {len(rematched)} errored task(s) re-fought, {len(still_failing)} still failing.")
+        if bool(_cfg("show_on_kanban", True)):
+            affected = sorted(
+                {
+                    r["id"]
+                    for r in suite["rounds"]
+                    if any(t in {e.get("task") for e in errors} for t in r["tasks"])
+                }
             )
-            kanban_note = "noted on kanban parent card" if ok else f"kanban note skipped: {out[:200]}"
+            board = _kb.Scoreboard(fighters[0], fighters[1], suite)
+            board.start(round_ids=affected or None, title_prefix="REMATCH")
+            if board.ids.get("parent"):
+                board._run(
+                    _kb._cli(
+                        "--board", _kb.BOARD, "comment", board.ids["parent"],
+                        f"Rematch of {len(errors)} errored task(s): {len(rematched)} re-fought, "
+                        f"{len(still_failing)} still failing. Original fight card: {last.get('kanban', {}).get('parent')}.",
+                    )
+                )
+            last["kanban"] = board.ids
+            try:
+                _CTX.state.set("last_fight", last)  # persist new kanban ids for scoring
+            except Exception:
+                pass
+            kanban_note = (
+                f"rematch bout posted on kanban board '{_kb.BOARD}' (parent={board.ids.get('parent')})"
+                if board.ids.get("parent")
+                else f"kanban rematch cards failed: {board.errors[:1]}"
+            )
     except Exception as exc:
-        kanban_note = f"kanban note skipped: {exc}"
+        kanban_note = f"kanban rematch cards skipped: {exc}"
 
     return _ok(
         fighters=list(fighters),
