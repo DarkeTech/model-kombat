@@ -5,15 +5,24 @@ Hermes Desktop, dark theme, one window: chat on the left, **Model Kombat** pane
 pinned right, kanban board one click away. No voice-over required — the captions
 carry the story, so record with the mic muted and the cursor moving deliberately.
 
-**Cast:** `stealth/crouton-alpha` (Crouton) vs `deepseek/deepseek-v4.1-flash-1017` (DS-Flash).
+**Cast (verified, 2026-11-10):** `nvidia/nemotron-3.5-super-vl` (Nemo-VL) vs
+`deepseek/deepseek-v4.1-flash-1017` (DS-Flash).
 **Board:** `kombat-demo`. **Card:** `t_9f21c4` — *"Checkout totals refactor"* (body: a
 rounding bug in the totals function, plus a note that tax must stay 2 decimals).
 
-The video is honest about draws: the card is fought at `--gauntlet` (every task
-difficulty 3) because that is the setting that actually separates strong models,
-and a separate draw result is shown for three seconds as a real outcome, not a
-failure. The final pair after the live fight is `{WINNER}` / `{LOSER}` — fill
-those in from the take you actually record.
+This pair is proven decisive at **`--hard`** (card `card-c2a527047b`, fight
+`20261110-101512`, 0 errors, no time cap): 3.0–3.0 after three rounds, then sudden
+death on `coding-011` — **DS-Flash passes 19/19 cases, Nemo-VL emits no code
+block at all.** DS-Flash wins, 63.7s vs 261.4s latency, ~$0.017 total.
+
+Do **not** scout this demo card at `--gauntlet`: at d3 a slow model can burn the
+180s per-call deadline and get excluded (`nemotron-3.5-lightning` did exactly
+that — 14 errored calls, R2/R3 excluded, no comparison). `--hard` is the setting
+that produced a real result.
+
+The video is honest about draws: one real draw screen is shown for three seconds
+as an outcome, not a failure, and the value beat explains what a draw still tells
+you. Fill `{WINNER}` / `{LOSER}` from the take you actually record.
 
 ---
 
@@ -22,20 +31,20 @@ those in from the take you actually record.
 **Screen:** the PM's board, card `t_9f21c4` highlighted under the cursor.
 **Caption:** `Picking a model for this card used to mean two sessions and a spreadsheet.`
 
-### 0:05–0:13 — Step 1: scout the card at gauntlet intensity
+### 0:05–0:13 — Step 1: scout the card at hard intensity
 
 **Screen:** hover the card so its ID is visible, then switch to chat. Type:
 
 ```
-/kombat scout card:t_9f21c4 --gauntlet
+/kombat scout card:t_9f21c4 --hard
 ```
 
-**Caption:** `Step 1 — scout the card. Local keyword rules, no LLM call. --gauntlet = every task difficulty 3.`
+**Caption:** `Step 1 — scout the card. Local keyword rules, no LLM call. --hard = difficulty 2–3 only.`
 
 ### 0:13–0:23 — The adaptive card
 
 **Screen:** the tool result scrolls: `classified lanes: coding (…), debugging (…)`,
-`intensity: gauntlet (expected discrimination: low|medium|high)`, then R1 Warm-up
+`intensity: hard (expected discrimination: low|medium|high)`, then R1 Warm-up
 1pt / R2 Main Event 2pt / R3 Championship 3pt / `sudden death: … (fought up
 front, used only on a tie)`, each with task IDs. Hold on the
 `Next: /kombat fight … --card card-…` line.
@@ -47,7 +56,7 @@ front, used only on a tie)`, each with task IDs. Hold on the
 machine — `{CARD_ID}` below) and run it:
 
 ```
-/kombat fight stealth/crouton-alpha vs deepseek/deepseek-v4.1-flash-1017 --card {CARD_ID}
+/kombat fight nvidia/nemotron-3.5-super-vl vs deepseek/deepseek-v4.1-flash-1017 --card {CARD_ID}
 ```
 
 **Caption:** `Step 2 — two models, identical prompts, one card.`
@@ -67,17 +76,19 @@ points tie. Let it run in real time for ~15 s, then a 2–3 s jump cut.
 **Caption:** `Live: every answer scored as it lands — executed code, counts, SQL rows.`
 **Caption (second, small):** `No model judges another model.`
 
-### 0:52–1:02 — Decisive mixed-tier result
+### 0:52–1:02 — Decisive result: sudden death
 
-**Screen:** the pane shows the K.O. stamp, or `WINNER: {WINNER}` on points. Cut to
-the scorecard report: the round table with per-task detail (`4/4 cases`,
-`25 words: 25 ✓`, `rows match`) and the usage table with `cost_source`
-(`host` / `estimated` / `n/a` per fighter).
-**Caption:** `{WINNER} takes the d3 rounds; {LOSER} takes the warm-ups. Decisive on the hard tasks.`
+**Screen:** the arena goes `ROUND 3 — CHAMPIONSHIP` → points stay level → the
+sudden-death answer is revealed on `coding-011` → `WINNER: DS-Flash`. Cut to the
+scorecard report: the round table with per-task detail (`17/17 cases`,
+`12/12 cases`, `A: no python code block/function found · B: 19/19 cases`) and the
+usage table with `cost_source` (`host` / `estimated` / `n/a` per fighter).
+**Caption:** `Round 3 tied at 3.0 — so it goes to sudden death. DS-Flash passes 19/19 cases; Nemo-VL writes no code at all.`
 
-> Mixed-tier is the point: a model that wins only the easy tasks does not win the
-> card. If the recorded take is a tie instead, use the draw beat below and skip
-> this win caption — do not fabricate a winner.
+> The point is that a card can tie twice and still resolve honestly: warm-ups and
+> main event split evenly, and the deciding evidence is executed code, not an
+> opinion. If the recorded take ties all the way, use the draw + value beats
+> below and skip this win caption — do not fabricate a winner.
 
 ### 1:02–1:10 — Step 3: ladder + badge (≈ vs clear edge)
 
@@ -94,14 +105,17 @@ short name starts with `≈` and the tooltip says `verdict: no clear edge` —
 `why: … and … are within 8.4 Elo — this is an efficiency tiebreak (latency/cost), not a performance win.`
 **Caption:** `Step 3 — per-lane Elo and the pick on the card. ≈ means "no clear edge", not "winner".`
 
-### 1:10–1:13 — Honest-result beat: the draw screen
+### 1:10–1:15 — Honest-result beat: the draw screen and the value call
 
 **Screen:** cut to the Desktop arena showing a real draw
 (`docs/previews/arena_draw_edge.png` is the reference frame): `DRAW` banner,
 equal points, and the line
 `efficiency edge: Crouton — faster total latency (18.400s vs 21.500s) — efficiency edge (not a win)`.
-Hold exactly 3 s. No zoom, no stamp.
-**Caption:** `Strong models tie. This is a draw — the cheaper model gets an efficiency note, not a win.`
+Then cut to a `/kombat recommend` result whose `why` ends with
+`Measured: equal quality — Nemo-Nano is 18.0× cheaper and 2.8× faster.`
+Hold each about 2.5 s. No zoom, no stamp.
+**Caption:** `Strong models tie. Then Kombat tells you what the tie costs: 18× cheaper, 2.8× faster, same answers.`
+**Caption (small):** `Measured on its own runs — still not a quality win.`
 
 ### 1:13–1:20 — Close
 
@@ -114,7 +128,7 @@ Hold exactly 3 s. No zoom, no stamp.
 
 Providers 429 mid-take. Do **not** re-record live if it happens; cut instead.
 
-1. Before recording, run the fight once off-camera at the same `--gauntlet`
+1. Before recording, run the fight once off-camera at the same `--hard`
    intensity (a warm-up also warms the rate-limit window). Keep its scorecard and
    the populated `live.json` open in a tab.
 2. If the live fight stalls, cut from the start prompt straight to the finished
@@ -134,13 +148,13 @@ Providers 429 mid-take. Do **not** re-record live if it happens; cut instead.
 | # | In | Out | Content |
 |---|---|---|---|
 | 1 | 0:00 | 0:05 | board, card highlighted |
-| 2 | 0:05 | 0:13 | `/kombat scout card:t_9f21c4 --gauntlet` |
+| 2 | 0:05 | 0:13 | `/kombat scout card:t_9f21c4 --hard` |
 | 3 | 0:13 | 0:23 | lanes, intensity, card JSON |
 | 4 | 0:23 | 0:29 | `/kombat fight … --card {CARD_ID}` |
 | 5 | 0:29 | 0:52 | arena pane + board, live |
-| 6 | 0:52 | 1:02 | `WINNER: {WINNER}` + scorecard |
+| 6 | 0:52 | 1:02 | `WINNER: DS-Flash` after sudden death + scorecard |
 | 7 | 1:02 | 1:10 | `/kombat ladder` + `recommend board`, ≈ vs clear edge |
-| 8 | 1:10 | 1:13 | Desktop draw screen, 3 s honest beat |
+| 8 | 1:10 | 1:15 | Desktop draw screen + measured value clause |
 | 9 | 1:13 | 1:20 | close card |
 
 Total: 80 s. If a shot overruns, cut shot 5 first (the only one that can be
@@ -150,10 +164,11 @@ inside spec.
 ## Pre-record checklist
 
 - [ ] `llm.allow_model_override` on, both model IDs in `allowed_models`
+- [ ] Gateway/Desktop **restarted** since the last `tools.py` edit (the plugin host keeps old modules in memory until restart)
 - [ ] `show_on_kanban: true`, board `kombat-demo` created, card `t_9f21c4` on it
 - [ ] A second card on the board whose ladder margin is under 15 Elo (for the `≈` badge shot)
-- [ ] `max_fight_cost_usd` / `max_fight_tokens` high enough for a full gauntlet card
+- [ ] `max_fight_cost_usd` / `max_fight_tokens` high enough for a full hard card (~$0.02 for this pair)
 - [ ] Desktop restarted after the last plugin edit (tool list + pane reload)
-- [ ] One off-camera gauntlet fight of the same card already scored (fallback footage)
-- [ ] `{WINNER}` / `{LOSER}` filled from the actual take before export
+- [ ] One off-camera hard fight of the same card already scored (fallback footage — card-c2a527047b/fight 20261110-101512 qualifies)
+- [ ] `{WINNER}` / `{LOSER}` filled from the actual take before export (verified pair expectation: DS-Flash wins on sudden death)
 - [ ] Notifications off, terminal history clean, no other windows in frame
