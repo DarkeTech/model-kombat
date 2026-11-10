@@ -2378,6 +2378,54 @@ def _num_or_none(value):
     return float(value)
 
 
+def _value_ratios(fighter_a: str, fighter_b: str, usage: dict) -> dict:
+    """Measured cost/latency ratios behind a draw (display only — never a win).
+
+    Returns ``latency_ratio`` / ``cost_ratio`` oriented so ``>= 1`` is an
+    advantage for ``value_fighter``, plus a one-clause ``value_summary`` such as
+    ``Nemo-Nano is 2.8× faster and 18.0× cheaper at equal score``. Ratios under
+    5% are noise and are reported as ``None``.
+    """
+    table = usage if isinstance(usage, dict) else {}
+    ua = table.get(fighter_a) if isinstance(table.get(fighter_a), dict) else {}
+    ub = table.get(fighter_b) if isinstance(table.get(fighter_b), dict) else {}
+
+    def _adv(x, y):
+        """(side, ratio) where ratio >= 1 favours the side with the smaller value."""
+        if x is None or y is None or x <= 0 or y <= 0 or x == y:
+            return None, None
+        side, ratio = ("a", y / x) if x < y else ("b", x / y)
+        if ratio < 1.05:
+            return None, None
+        return side, round(ratio, 2)
+
+    speed_side, speed = _adv(_num_or_none(ua.get("latency_s")), _num_or_none(ub.get("latency_s")))
+    cost_side, cheap = _adv(_num_or_none(ua.get("cost_usd")), _num_or_none(ub.get("cost_usd")))
+    if speed is None and cheap is None:
+        return {"value_fighter": None, "latency_ratio": None, "cost_ratio": None,
+                "value_summary": None}
+
+    def _id(side):
+        return fighter_a if side == "a" else fighter_b
+
+    if speed is not None and cheap is not None and speed_side == cost_side:
+        fighter = _id(speed_side)
+        summary = f"{_short_name(fighter)} is {speed:.1f}× faster and {cheap:.1f}× cheaper at equal score"
+        return {"value_fighter": fighter, "latency_ratio": speed, "cost_ratio": cheap,
+                "value_summary": summary}
+    parts = []
+    if speed is not None:
+        parts.append(f"{_short_name(_id(speed_side))} {speed:.1f}× faster")
+    if cheap is not None:
+        parts.append(f"{_short_name(_id(cost_side))} {cheap:.1f}× cheaper")
+    return {
+        "value_fighter": _id(speed_side) if speed is not None else _id(cost_side),
+        "latency_ratio": speed,
+        "cost_ratio": cheap,
+        "value_summary": " · ".join(parts) + " at equal score",
+    }
+
+
 def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict) -> dict:
     """Tie-break display for a draw: faster latency, then fewer output tokens, then cost.
 
@@ -2422,6 +2470,7 @@ def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict) -> dict:
             "label": "efficiency edge (not a win)",
             "a": va,
             "b": vb,
+            **_value_ratios(fighter_a, fighter_b, usage),
         }
     return {
         "fighter": None,

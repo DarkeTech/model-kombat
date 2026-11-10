@@ -255,6 +255,9 @@ def _edge_line(edge: Any, name_a: str, id_a: str, name_b: str, id_b: str) -> str
         text = f"efficiency edge: {short} — {reason}" if reason else f"efficiency edge: {short}"
     else:
         text = f"efficiency edge: {reason}" if reason else "efficiency edge"
+    value = str(edge.get("value_summary") or "").strip()
+    if value:
+        text = f"{text} · {value}"
     return f'<p class="edge-line">{_esc(text)}</p>'
 
 

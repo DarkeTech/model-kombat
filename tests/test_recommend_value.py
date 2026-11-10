@@ -162,6 +162,31 @@ def test_value_edge_helper_ratios_flip_for_runner_winner():
     assert value["cost_ratio"] == 18.0 and value["latency_ratio"] == 2.8, value
 
 
+def test_draw_edge_carries_value_ratios():
+    usage = {
+        "zzz/nano": {"latency_s": 38.92, "cost_usd": 0.0025, "output_tokens": 900},
+        "aaa/ultra": {"latency_s": 109.442, "cost_usd": 0.0451, "output_tokens": 900},
+    }
+    edge = tools._efficiency_edge("zzz/nano", "aaa/ultra", usage)
+    assert edge["metric"] == "latency", edge
+    assert edge["latency_ratio"] == 2.81, edge
+    assert edge["cost_ratio"] == 18.04, edge
+    assert edge["value_fighter"] == "zzz/nano", edge
+    assert "18.0× cheaper" in edge["value_summary"], edge["value_summary"]
+    assert "not a win" in edge["reason"], edge
+
+
+def test_draw_edge_value_summary_skips_unknown_cost():
+    usage = {
+        "zzz/nano": {"latency_s": 38.92, "cost_usd": None},
+        "aaa/ultra": {"latency_s": 109.442, "cost_usd": 0.0451},
+    }
+    edge = tools._efficiency_edge("zzz/nano", "aaa/ultra", usage)
+    assert edge["cost_ratio"] is None, edge
+    assert edge["latency_ratio"] == 2.81, edge
+    assert "cheaper" not in (edge["value_summary"] or ""), edge
+
+
 def main():
     tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0
