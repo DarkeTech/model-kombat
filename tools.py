@@ -3001,14 +3001,38 @@ def _card_lane_weights(card: dict) -> list[dict]:
     return weights
 
 
+def _value_edge_for(pick_metrics: dict, runner_metrics: dict):
+    """Build ladder ``value_edge`` from the weighted per-lane efficiency accumulators."""
+    def _row(acc: dict) -> dict:
+        acc = acc if isinstance(acc, dict) else {}
+        lat_w = acc.get("lat_w") or 0.0
+        cost_w = acc.get("cost_w") or 0.0
+        return {
+            "model": acc.get("model"),
+            "latency_per_task": (acc.get("latency", 0.0) / lat_w) if lat_w else None,
+            "cost_per_point": (acc.get("cost", 0.0) / cost_w) if cost_w else None,
+        }
+
+    try:
+        fn = getattr(_ladder_module(), "value_edge", None)
+        if fn is None:
+            return None
+        return fn(_row(pick_metrics), _row(runner_metrics))
+    except Exception:  # noqa: BLE001 — a display edge must never break a recommendation
+        return None
+
+
 def _recommend_card(card: dict, candidates=None) -> dict:
     """Per-lane picks plus one overall pick for a scout card.
 
     Overall pick = the model with the highest **weighted average lane Elo**,
-    ``sum(lane_weight * elo(model, lane)) / sum(lane_weight)`` over the lanes
-    the model has Elo in. A margin under 15 Elo is not a performance win: the
-    pick is labelled ``verdict: "no clear edge"``, confidence is forced low,
-    and ``why`` says it is an efficiency (latency/cost) tiebreak.
+    ``sum(lane_weight * elo(model, lane)) / sum(lane_weight)`` over the card's
+    lanes, restricted to models that have Elo in every one of those lanes when
+    such models exist. Ties on Elo break by lane picks won, then coverage, then
+    measured cost/latency — never alphabetically. A margin under 15 Elo is not a
+    performance win: the pick is labelled ``verdict: "no clear edge"``, confidence
+    is forced low, ``why`` says it is an efficiency (latency/cost) tiebreak, and
+    ``value_edge`` carries the measured "equal quality — X is Nx cheaper" call.
     """
     weights = _card_lane_weights(card)
     per_lane: list[dict] = []
@@ -3016,6 +3040,9 @@ def _recommend_card(card: dict, candidates=None) -> dict:
     weighted: dict[str, float] = {}
     weight_totals: dict[str, float] = {}
     contributions: dict[str, dict] = {}
+    coverage: dict[str, int] = {}
+    lane_wins: dict[str, int] = {}
+    metrics: dict[str, dict] = {}
     for item in weights:
         lane, weight = item["lane"], item["weight"]
         rec, rec_err = _recommend_lane(lane, candidates)
@@ -3038,6 +3065,8 @@ def _recommend_card(card: dict, candidates=None) -> dict:
         if pick_elo is None and pick:
             lane_elo = _elo_for(lane, str(pick))
             pick_elo = lane_elo
+        if pick:
+            lane_wins[str(pick)] = lane_wins.get(str(pick), 0) + 1
         for model, row in rows.items():
             elo = row.get("elo")
             if not isinstance(elo, (int, float)) or isinstance(elo, bool):
@@ -3045,6 +3074,20 @@ def _recommend_card(card: dict, candidates=None) -> dict:
             weighted[model] = round(weighted.get(model, 0.0) + weight * float(elo), 6)
             weight_totals[model] = round(weight_totals.get(model, 0.0) + weight, 6)
             contributions.setdefault(model, {})[lane] = round(weight * float(elo), 6)
+            coverage[model] = coverage.get(model, 0) + 1
+            # Weighted means of the per-lane measured efficiency, for the value edge.
+            acc = metrics.setdefault(
+                model,
+                {"model": model, "latency": 0.0, "lat_w": 0.0, "cost": 0.0, "cost_w": 0.0},
+            )
+            lat = row.get("latency_per_task")
+            if isinstance(lat, (int, float)) and not isinstance(lat, bool):
+                acc["latency"] += weight * float(lat)
+                acc["lat_w"] += weight
+            cost = row.get("cost_per_point")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                acc["cost"] += weight * float(cost)
+                acc["cost_w"] += weight
         lane_margin = rec.get("margin")
         lane_verdict = rec.get("verdict")
         if not lane_verdict:
@@ -3079,7 +3122,34 @@ def _recommend_card(card: dict, candidates=None) -> dict:
         for model, total in weighted.items()
         if weight_totals.get(model)
     }
-    ranked = sorted(averages.items(), key=lambda kv: (-kv[1], kv[0]))
+    # The overall pick must be evaluable on the whole card: prefer models with
+    # Elo in every one of the card's lanes so a thin-coverage model can't win on
+    # a flattering subset. Falls back to whatever coverage exists.
+    full_coverage = [m for m in averages if coverage.get(m, 0) >= len(weights)]
+    eligible = {m: averages[m] for m in (full_coverage or list(averages))}
+
+    def _overall_key(model: str):
+        """Deterministic order: Elo, then lane picks won, then coverage, then value.
+
+        Alphabetical order is deliberately last — a tie on Elo must never be
+        settled by a model id, which is how the overall pick used to disagree
+        with a unanimous per-lane pick.
+        """
+        acc = metrics.get(model) or {}
+        cpp = (acc["cost"] / acc["cost_w"]) if acc.get("cost_w") else None
+        lat = (acc["latency"] / acc["lat_w"]) if acc.get("lat_w") else None
+        return (
+            -round(eligible[model], 6),
+            -lane_wins.get(model, 0),
+            -coverage.get(model, 0),
+            cpp is None,
+            cpp if cpp is not None else 0.0,
+            lat is None,
+            lat if lat is not None else 0.0,
+            model,
+        )
+
+    ranked = sorted(eligible.items(), key=lambda kv: _overall_key(kv[0]))
     overall = None
     if ranked:
         pick, weighted_elo = ranked[0]
@@ -3089,6 +3159,9 @@ def _recommend_card(card: dict, candidates=None) -> dict:
         short = _short_name(pick)
         pick_short = ("≈" + short) if no_edge else short
         runner_short = _short_name(runner_up) if runner_up else None
+        value = None
+        if no_edge and runner_up:
+            value = _value_edge_for(metrics.get(pick) or {}, metrics.get(runner_up) or {})
         if no_edge:
             why = (
                 f"{pick_short} and {runner_short} are within {margin:.1f} Elo "
@@ -3096,6 +3169,8 @@ def _recommend_card(card: dict, candidates=None) -> dict:
                 if runner_up else
                 f"{pick_short} has no runner-up on this card's lanes — efficiency tiebreak, not a performance win."
             )
+            if value:
+                why = f"{why} Measured: {value['label']}."
         else:
             why = (
                 f"{pick_short} has the highest weighted average lane Elo "
@@ -3109,11 +3184,19 @@ def _recommend_card(card: dict, candidates=None) -> dict:
             "verdict": "no clear edge" if no_edge else "clear edge",
             "runner_up": runner_up,
             "per_lane": contributions.get(pick, {}),
+            "lane_picks_won": lane_wins.get(pick, 0),
+            "lanes_considered": len(weights),
+            "value_edge": value,
             "confidence": "low" if (len(ranked) < 2 or no_edge) else "medium",
             "why": why,
         }
         if len(ranked) < 2:
             warnings.append("overall pick has no runner-up (ladder thin on this card's lanes)")
+        if full_coverage and len(full_coverage) < len(averages):
+            warnings.append(
+                "overall pick considered only models with Elo in every card lane "
+                f"({len(full_coverage)} of {len(averages)} ranked models)"
+            )
     else:
         warnings.append("no ladder data for this card's lanes yet — run a fight first")
     return {
@@ -3122,7 +3205,8 @@ def _recommend_card(card: dict, candidates=None) -> dict:
         "warnings": warnings,
         "method": (
             "overall = argmax_model sum(lane_weight * elo(model, lane)) / sum(lane_weight) "
-            "— a weighted average lane Elo across the card's lanes"
+            "— a weighted average lane Elo across the card's lanes; ties break by lane "
+            "picks won, then lane coverage, then measured cost/latency (never by name)"
         ),
     }
 
@@ -3182,6 +3266,7 @@ def kombat_recommend(args: dict, **kwargs) -> str:
                 "verdict": verdict,
                 "confidence": "low" if verdict == "no clear edge" else (rec.get("confidence") or "low"),
                 "elo": rec.get("elo") if rec.get("elo") is not None else _elo_for(lane, pick),
+                "value_edge": (rec or {}).get("value_edge"),
                 "updated": _now_iso(),
             }
             mapping[str(cid)] = entry
@@ -3223,6 +3308,9 @@ def kombat_recommend(args: dict, **kwargs) -> str:
                 "verdict": overall.get("verdict"),
                 "confidence": overall.get("confidence") or "none",
                 "why": overall.get("why"),
+                "lane_picks_won": overall.get("lane_picks_won"),
+                "lanes_considered": overall.get("lanes_considered"),
+                "value_edge": overall.get("value_edge"),
                 "method": result["method"],
                 "warnings": result["warnings"],
                 "cost_per_point": None,

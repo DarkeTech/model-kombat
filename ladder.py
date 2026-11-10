@@ -22,7 +22,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["update_ladder", "recommend", "write_recommendations", "short_name"]
+__all__ = ["update_ladder", "recommend", "write_recommendations", "short_name", "value_edge"]
 
 START_ELO = 1500.0
 K_FACTOR = 24.0
@@ -365,6 +365,73 @@ def _title_token(token: str) -> str:
     return token.capitalize()
 
 
+def _num_or_none(value):
+    """Numeric passthrough; anything else (bool/str/None) becomes None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+VALUE_MIN_RATIO = 1.05  # under 5% is noise, not a value edge
+
+
+def value_edge(pick: dict, runner: dict) -> dict | None:
+    """Measured efficiency edge between two ranked models (never a performance win).
+
+    Compares ``cost_per_point`` and ``latency_per_task`` of the two rows and
+    returns which model is cheaper/faster and by how much. Ratios are oriented
+    so ``>= 1`` is an advantage for ``fighter``. Returns ``None`` when neither
+    metric is measured on both sides, so unknown prices stay ``n/a`` rather than
+    inventing a comparison.
+    """
+    if not isinstance(pick, dict) or not isinstance(runner, dict):
+        return None
+    pick_cost = _num_or_none(pick.get("cost_per_point"))
+    run_cost = _num_or_none(runner.get("cost_per_point"))
+    pick_lat = _num_or_none(pick.get("latency_per_task"))
+    run_lat = _num_or_none(runner.get("latency_per_task"))
+    cost_ratio = (run_cost / pick_cost) if (pick_cost and run_cost) else None
+    lat_ratio = (run_lat / pick_lat) if (pick_lat and run_lat) else None
+    if cost_ratio is None and lat_ratio is None:
+        return None
+
+    # Cheaper wins the value call; latency only decides when cost is unknown.
+    if cost_ratio is not None:
+        pick_wins = cost_ratio > 1.0
+    elif lat_ratio is not None:
+        pick_wins = lat_ratio > 1.0
+    else:
+        return None
+    winner, loser = (pick, runner) if pick_wins else (runner, pick)
+    win_cost = cost_ratio if pick_wins else (1.0 / cost_ratio if cost_ratio else None)
+    win_lat = lat_ratio if pick_wins else (1.0 / lat_ratio if lat_ratio else None)
+    win_cost = round(win_cost, 2) if win_cost is not None else None
+    win_lat = round(win_lat, 2) if win_lat is not None else None
+
+    parts = []
+    if win_cost is not None and win_cost >= VALUE_MIN_RATIO:
+        parts.append(f"{win_cost:.1f}× cheaper")
+    if win_lat is not None and win_lat >= VALUE_MIN_RATIO:
+        parts.append(f"{win_lat:.1f}× faster")
+    if not parts:
+        return None
+
+    win_name = short_name(str(winner.get("model") or ""))
+
+    out = {
+        "fighter": winner.get("model"),
+        "other": loser.get("model"),
+        "short": win_name,
+        "cost_ratio": win_cost,
+        "latency_ratio": win_lat,
+        "cheaper": bool(win_cost is not None and win_cost >= VALUE_MIN_RATIO),
+        "faster": bool(win_lat is not None and win_lat >= VALUE_MIN_RATIO),
+        "label": f"equal quality — {win_name} is " + " and ".join(parts),
+        "note": "measured cost/latency edge at equal Elo — not a performance win",
+    }
+    return out
+
+
 def _model_view(model_id: str, model: dict | None) -> dict:
     model = model if isinstance(model, dict) else {}
     points = _num(model.get("points"))
@@ -464,6 +531,11 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
                 f"runner-up across {fights} fights at {cpp_txt} per point."
             )
 
+        ve = value_edge(pick, runner_up) if (runner_up is not None and no_edge) else None
+        if ve:
+            why = f"{why} Measured: {ve['label']}."
+        why = why if why.endswith(".") else why + "."
+
         return {
             "ok": True,
             "pick": pick["model"],
@@ -477,8 +549,10 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
             "cost_per_point_display": f"{cpp:.4f}" if cpp is not None else "n/a",
             "runner_up": runner_up["model"] if runner_up else None,
             "why": why,
+            "value_edge": ve,
             "ranking": ranking,
         }
+
     except Exception:
         return {
             "ok": True,

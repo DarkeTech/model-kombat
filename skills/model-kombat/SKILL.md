@@ -54,6 +54,21 @@ exact checks, not by vibes.
    K.O., and total cost/latency. Quote the score details; don't invent
    strengths the scores don't show. Note any excluded (errored/skipped) rounds.
 
+## Reading a tie (do not manufacture a winner)
+A strong pair on mechanical tasks usually draws. When `kombat_score_answers`
+returns `winner: "draw"`, report the `edge` object as-is (an efficiency edge,
+never a win). Then call `kombat_recommend` for the card: when the top-two Elo
+margin is under 15 it returns `verdict: "no clear edge"` plus a `value_edge`
+block (`cost_ratio`, `latency_ratio`, `label: "equal quality — X is 18.0× cheaper
+and 2.8× faster"`) and the same clause appended to `why`. Lead with that clause
+— it is the decision the user actually needs — and say plainly that it is
+measured cost/latency at equal quality, not a quality win. `value_edge` is
+`null` when price is unknown; say `n/a` rather than guessing.
+The overall pick is a weighted average lane Elo restricted to models with Elo in
+every card lane, with ties broken by lane picks won, then coverage, then
+cost/latency (never by model name), so `overall.pick` always agrees with a
+unanimous per-lane pick — if it doesn't, that is a bug worth reporting.
+
 ## Agentic mode (explicit opt-in only)
 `kombat_run_agentic_fight` dispatches each task to a real kanban worker with a
 per-task model override — workers solve with tools, cards move live. Slower,
