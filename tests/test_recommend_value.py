@@ -187,6 +187,20 @@ def test_draw_edge_value_summary_skips_unknown_cost():
     assert "cheaper" not in (edge["value_summary"] or ""), edge
 
 
+def test_provisional_edge_suppresses_ratios():
+    usage = {
+        "zzz/nano": {"latency_s": 545.5, "cost_usd": 0.0002},
+        "aaa/ultra": {"latency_s": 6.7, "cost_usd": 0.0007},
+    }
+    edge = tools._efficiency_edge("zzz/nano", "aaa/ultra", usage, has_errors=True)
+    assert edge["provisional"] is True, edge
+    assert edge["value_summary"] is None and edge["cost_ratio"] is None, edge
+    assert edge["fighter"] == "aaa/ultra", edge
+    # Without the flag the same totals would print an 81x "speedup".
+    clean = tools._efficiency_edge("zzz/nano", "aaa/ultra", usage)
+    assert clean["latency_ratio"] == 81.42, clean
+
+
 def main():
     tests = [v for n, v in sorted(globals().items()) if n.startswith("test_") and callable(v)]
     failures = 0

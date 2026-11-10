@@ -258,6 +258,8 @@ def _edge_line(edge: Any, name_a: str, id_a: str, name_b: str, id_b: str) -> str
     value = str(edge.get("value_summary") or "").strip()
     if value:
         text = f"{text} · {value}"
+    if edge.get("provisional"):
+        text = f"{text} (provisional — fight had errored calls)"
     return f'<p class="edge-line">{_esc(text)}</p>'
 
 

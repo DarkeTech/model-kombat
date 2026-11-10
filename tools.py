@@ -2426,10 +2426,13 @@ def _value_ratios(fighter_a: str, fighter_b: str, usage: dict) -> dict:
     }
 
 
-def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict) -> dict:
+def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict, has_errors: bool = False) -> dict:
     """Tie-break display for a draw: faster latency, then fewer output tokens, then cost.
 
     This is explicitly **not** a win — it never changes ``winner`` or the ladder.
+    When ``has_errors`` is set the accumulated latency includes abandoned/errored
+    calls, so the edge is marked provisional and the cost/latency ratios are
+    suppressed rather than presenting an 80x "speedup" that is really a timeout.
     """
     usage = usage if isinstance(usage, dict) else {}
     ua = usage.get(fighter_a) if isinstance(usage.get(fighter_a), dict) else {}
@@ -2470,7 +2473,10 @@ def _efficiency_edge(fighter_a: str, fighter_b: str, usage: dict) -> dict:
             "label": "efficiency edge (not a win)",
             "a": va,
             "b": vb,
-            **_value_ratios(fighter_a, fighter_b, usage),
+            **({"provisional": True,
+                "note": "provisional — this fight had errored/excluded calls, so the totals include abandoned attempts",
+                "value_fighter": None, "latency_ratio": None, "cost_ratio": None, "value_summary": None}
+               if has_errors else _value_ratios(fighter_a, fighter_b, usage)),
         }
     return {
         "fighter": None,
@@ -2718,7 +2724,8 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
         winner = "draw"
 
     # Draw display: an efficiency edge is surfaced but never counts as a win.
-    edge = _efficiency_edge(fighter_a, fighter_b, usage) if winner == "draw" else None
+    had_errors = bool(errors_a or errors_b or any(t.get("excluded") for r in rounds_out for t in r["tasks"]))
+    edge = _efficiency_edge(fighter_a, fighter_b, usage, has_errors=had_errors) if winner == "draw" else None
 
     # Championship K.O.
     ko = False
