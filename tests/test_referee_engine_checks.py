@@ -121,6 +121,38 @@ def leak():
     src.unlink(missing_ok=True)
 
 
+def test_code_exec_winapi_native_copy_cannot_escape():
+    """Native _winapi.CopyFile2 fires no audit events - must be unreachable.
+
+    Regression for the Windows escape where shutil.copy2's CopyFile2 fast path
+    copied a file out of the tempdir without ever raising an audit event.
+    """
+    if os.name != "nt":
+        print("  [_winapi copy] skipped (Windows-only vector)")
+        return
+    leak = Path(tempfile.gettempdir()) / f"kombat-ref-leak-winapi-{os.getpid()}.txt"
+    src = Path(tempfile.gettempdir()) / f"kombat-ref-src-winapi-{os.getpid()}.txt"
+    src.write_text("source", encoding="utf-8")
+    if leak.exists():
+        leak.unlink()
+    check = {
+        "type": "code_exec",
+        "entrypoint": "leak",
+        "cases": [{"args": [], "raises": "AttributeError"}],
+        "timeout_s": 5,
+    }
+    code = f"""```python
+def leak():
+    import _winapi
+    _winapi.CopyFile2({str(src)!r}, {str(leak)!r}, 0)
+    return True
+```"""
+    out = run(check, code, True)
+    assert out["score"] == 1.0, f"_winapi.CopyFile2 reachable: {out}"
+    assert not leak.exists(), f"sandbox leaked a native copy to {leak}"
+    src.unlink(missing_ok=True)
+
+
 def test_code_exec_write_outside_tempdir_via_tempfile():
     """Write outside tempdir via tempfile.mkstemp() with dir override - should be blocked."""
     # The harness sets tempfile.tempdir = ROOT, so mkstemp() without dir= should stay inside.
@@ -400,6 +432,12 @@ def spawn():
 
 def test_code_exec_spawn_os_fork():
     """Spawn process via os.fork - should be blocked by audit hook."""
+    if os.name == "nt":
+        # POSIX-only primitive: on Windows os.fork does not exist at all, so the
+        # blocked-spawn assertion cannot be expressed here (AttributeError is the
+        # correct outcome, not PermissionError).
+        print("  [os.fork] skipped on Windows (POSIX-only primitive)")
+        return
     check = {
         "type": "code_exec",
         "entrypoint": "spawn",
@@ -1477,6 +1515,7 @@ if __name__ == "__main__":
         ("write via os.open()", test_code_exec_write_outside_tempdir_via_os_open),
         ("write via pathlib", test_code_exec_write_outside_tempdir_via_pathlib),
         ("write via shutil", test_code_exec_write_outside_tempdir_via_shutil),
+        ("_winapi native copy", test_code_exec_winapi_native_copy_cannot_escape),
         ("write via tempfile.mkstemp(dir=)", test_code_exec_write_outside_tempdir_via_tempfile),
         ("write via ctypes (KNOWN_GAP)", test_code_exec_write_outside_tempdir_via_ctypes),
         ("write via io.open()", test_code_exec_write_outside_tempdir_via_io_open),

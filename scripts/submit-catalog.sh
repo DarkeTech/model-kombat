@@ -108,7 +108,8 @@ reports, history, exports and \`task_stats.json\` under the plugin data dir only
 No telemetry, no credential reads.
 
 **Checks.** \`hermes plugins validate\` passes with zero warnings,
-\`hermes plugins doctor --ci\` OK, 21 test suites pass.
+\`hermes plugins doctor --ci\` OK, all 22 test suites pass (Linux and Windows; the
+two fastapi-dependent dashboard suites skip, not fail, when fastapi is absent).
 
 Demo: <video link>
 EOF

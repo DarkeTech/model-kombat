@@ -9,7 +9,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import dashboard.plugin_api as api  # noqa: E402
+try:  # fastapi/httpx are test-only deps; the plugin itself declares none.
+    from fastapi import FastAPI  # noqa: F401
+    from fastapi.testclient import TestClient  # noqa: F401
+
+    import dashboard.plugin_api as api  # noqa: E402
+except ImportError:
+    if __name__ == "__main__":
+        print("SKIP test_plugin_api: fastapi/httpx not installed "
+              "(pytest-only suite) — run: pip install fastapi httpx pytest")
+        raise SystemExit(0)
+    raise
 
 
 def _client(tmp_path, monkeypatch):

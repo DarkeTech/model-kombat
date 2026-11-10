@@ -12,9 +12,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import lanes
-import dashboard.plugin_api as api
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+try:
+    import dashboard.plugin_api as api
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    _HAS_FASTAPI = True
+except ImportError:
+    # fastapi/httpx are test-only deps (the plugin declares none). The lanes
+    # coverage below still runs; the dashboard cases report as skipped.
+    api = None
+    FastAPI = None
+    TestClient = None
+    _HAS_FASTAPI = False
 
 
 # ------------------------------------------------------------------ lanes.py classifier adversarial
@@ -467,6 +478,21 @@ if __name__ == "__main__":
         ("KNOWN_GAP: regex ReDoS unbounded", KNOWN_GAP_test_regex_redoS_unbounded),
         ("KNOWN_GAP: SQL multiple statements", KNOWN_GAP_test_sql_exec_multiple_statements),
     ]
+
+    if not _HAS_FASTAPI:
+        _needs_fastapi = {
+            test_path_traversal_via_query_params,
+            test_corrupt_json_files,
+            test_huge_files,
+            test_never_raises,
+            test_direct_calls_exception_handling,
+            test_data_dir_resolution,
+            test_history_limit_clamping,
+            test_live_json_structure,
+        }
+        tests = [(n, f) for (n, f) in tests if f not in _needs_fastapi]
+        print(f"  [dashboard] {len(_needs_fastapi)} test(s) skipped: fastapi not installed "
+              "(pip install fastapi httpx)")
 
     passed = 0
     failed = 0

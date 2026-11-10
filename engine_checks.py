@@ -413,6 +413,20 @@ _tempfile.tempdir = ROOT
 # Never try to write .pyc files (the stdlib/site dirs are read-only to us).
 sys.dont_write_bytecode = True
 
+# Windows: shutil.copy2 takes a native _winapi.CopyFile2 fast path that raises
+# no audit events at all, so the open() hook below never sees the write and
+# candidate code could copy files out of the tempdir. Dropping the native entry
+# points forces the auditable open()-based copyfile path (slower, but visible).
+try:
+    import _winapi as _winapi_mod
+    for _attr in ("CopyFile2", "CopyFile"):
+        try:
+            delattr(_winapi_mod, _attr)
+        except AttributeError:
+            pass
+except ImportError:
+    pass
+
 # Reads are allowed from the tempdir plus the interpreter's own stdlib/site
 # directories so imports (and the harness itself) still work.
 _READ_ROOTS = []
@@ -453,6 +467,9 @@ _BLOCKED_MODULES = frozenset({
     "socket", "_socket", "ssl", "_ssl", "http", "urllib",
     "ftplib", "smtplib", "telnetlib", "multiprocessing", "_multiprocessing",
     "subprocess", "_posixsubprocess", "pty",
+    # Windows native file APIs: copying straight through _winapi fires no audit
+    # events, so the open() hook cannot see the write (see the harness prelude).
+    "_winapi",
 })
 
 
