@@ -9,7 +9,11 @@
 # catalog entry and the pinned README/docs assets always match the same commit.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Native tools (git, gh, python) cannot read MSYS-style /c/... paths, so convert
+# to the Windows form when this shell offers one (git-bash / MSYS).
+winpath() { ( cd "$1" 2>/dev/null && { pwd -W 2>/dev/null || pwd; } ); }
+
+REPO_DIR="$(winpath "$(dirname "${BASH_SOURCE[0]}")/..")"
 OWNER="DarkeTech"
 NAME="$(basename "$REPO_DIR")"
 UPSTREAM="NousResearch/hermes-agent"
@@ -29,7 +33,7 @@ if [ "$VERSION" != "$PLUGIN_VERSION" ]; then
   exit 1
 fi
 
-TMP="$(mktemp -d)"
+TMP="$(winpath "$(mktemp -d)")"
 trap 'rm -rf "$TMP"' EXIT
 sed "s/$PLACEHOLDER/$SHA/g" catalog/model-kombat.yaml > "$TMP/model-kombat.yaml"
 
@@ -52,7 +56,13 @@ fi
 
 echo "plugin:   $OWNER/$NAME @ $SHA (v$PLUGIN_VERSION)"
 echo "target:   $UPSTREAM  ->  plugin-catalog/model-kombat.yaml"
-"${EDITOR:-cat}" "$TMP/model-kombat.yaml"
+# Preview: an interactive $EDITOR (e.g. notepad) would block when this runs
+# from an agent or CI shell, so only use it on a real terminal.
+if [ -t 0 ] && [ -t 1 ] && [ -n "${EDITOR:-}" ]; then
+  "$EDITOR" "$TMP/model-kombat.yaml"
+else
+  cat "$TMP/model-kombat.yaml"
+fi
 
 if [ "${1:-}" != "--push" ]; then
   echo
@@ -61,7 +71,7 @@ if [ "${1:-}" != "--push" ]; then
 fi
 
 gh repo fork "$UPSTREAM" --clone=false --remote=false 2>/dev/null || true
-WORK="$(mktemp -d)"
+WORK="$(winpath "$(mktemp -d)")"
 gh repo clone "$OWNER/hermes-agent" "$WORK" -- --depth 1
 cd "$WORK"
 git checkout -b "catalog/model-kombat"
