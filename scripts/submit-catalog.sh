@@ -33,6 +33,23 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 sed "s/$PLACEHOLDER/$SHA/g" catalog/model-kombat.yaml > "$TMP/model-kombat.yaml"
 
+if grep -q "$PLACEHOLDER" "$TMP/model-kombat.yaml"; then
+  echo "a placeholder survived the pin — check the entry before pushing" >&2
+  exit 1
+fi
+
+if command -v uv >/dev/null 2>&1; then
+  uv run --quiet --with pyyaml python - "$TMP/model-kombat.yaml" "$SHA" <<'PY' || exit 1
+import pathlib, sys, yaml
+path, sha = sys.argv[1], sys.argv[2]
+data = yaml.safe_load(pathlib.Path(path).read_text(encoding="utf-8"))
+assert data["sha"] == sha, data["sha"]
+assets = [data["image"], *data["screenshots"]]
+assert all(sha in url for url in assets), assets
+print(f"entry parses: sha pinned, {len(assets)} assets pinned, {len(data['capabilities']['provides_tools'])} tools declared")
+PY
+fi
+
 echo "plugin:   $OWNER/$NAME @ $SHA (v$PLUGIN_VERSION)"
 echo "target:   $UPSTREAM  ->  plugin-catalog/model-kombat.yaml"
 "${EDITOR:-cat}" "$TMP/model-kombat.yaml"
