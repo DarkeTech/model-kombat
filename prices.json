@@ -6,5 +6,6 @@
   "nvidia/nemotron-3.5-lightning": {"in": 0.07, "out": 0.20},
   "nvidia/nemotron-3.5-super-vl": {"in": 0.15, "out": 0.50},
   "nvidia/nemotron-3-nano-30b-a3b": {"in": 0.06, "out": 0.24},
-  "stealth/crouton-alpha": {"in": 0.0, "out": 0.0, "label": "unlisted"}
+  "stealth/crouton-alpha": {"in": 0.0, "out": 0.0, "label": "unlisted"},
+  "z-ai/glm-5.3-flash": {"in": 0.15, "out": 0.50}
 }
