@@ -19,7 +19,7 @@ tier: community
 category: models
 requires_hermes: ">=0.23.0"
 docs_url: https://github.com/DarkeTech/model-kombat#readme
-version: "0.5.4"
+version: "0.6.0"
 platforms: []
 
 # Banner is 1200x600 (2:1), served from raw.githubusercontent.com pinned to the sha.

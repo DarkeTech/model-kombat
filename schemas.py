@@ -290,7 +290,8 @@ KOMBAT_HISTORY = {
         "report path). Use when the user asks about past fights or wants to compare "
         "models across multiple bouts. Pass {\"running\": true} to poll a background "
         "fight: returns the live job state (running, job_id, started/finished, error, "
-        "result summary) plus the current live.json."
+        "result summary) plus the current live.json. Pass {\"trends\": true} for the "
+        "per-lane Elo history (trend over time per model, with a chartable series)."
     ),
     "parameters": {
         "type": "object",
@@ -299,6 +300,22 @@ KOMBAT_HISTORY = {
             "running": {
                 "type": "boolean",
                 "description": "Return the live background job state + last live.json instead of fight history.",
+            },
+            "trends": {
+                "type": "boolean",
+                "description": "Return per-lane Elo history (trend per model) instead of fight history.",
+            },
+            "lane": {
+                "type": "string",
+                "description": "With trends=true: restrict to one lane (e.g. 'coding').",
+            },
+            "model": {
+                "type": "string",
+                "description": "With trends=true: restrict to one model ID.",
+            },
+            "series_limit": {
+                "type": "integer",
+                "description": "With trends=true: Elo points per trend row (oldest first). Default 50; 0 omits series.",
             },
         },
         "required": [],

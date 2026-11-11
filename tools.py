@@ -3422,6 +3422,14 @@ def kombat_recommend(args: dict, **kwargs) -> str:
 def kombat_history(args: dict, **kwargs) -> str:
     if args.get("running"):
         return _ok(**job_snapshot())
+    if args.get("trends"):
+        trends = _ladder_module().ladder_trends(
+            _data_dir(),
+            lane=args.get("lane"),
+            model=args.get("model"),
+            series_limit=args.get("series_limit", 50),
+        )
+        return _ok(**{k: v for k, v in trends.items() if k != "ok"})
     try:
         limit = int(args.get("limit", 10))
     except (TypeError, ValueError):

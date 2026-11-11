@@ -22,12 +22,13 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["update_ladder", "recommend", "write_recommendations", "short_name", "value_edge"]
+__all__ = ["update_ladder", "recommend", "write_recommendations", "short_name", "value_edge", "ladder_trends"]
 
 START_ELO = 1500.0
 K_FACTOR = 24.0
 DRAW_MARGIN = 0.25
 APPLIED_CAP = 500
+HISTORY_CAP = 4000  # Elo history entries kept (oldest dropped); ~2 entries per lane bout
 NO_DATA_WHY = "no fights recorded for this lane yet — run /kombat fight with a card that includes it"
 
 
@@ -39,7 +40,7 @@ def _now_iso() -> str:
 
 
 def _empty_ladder() -> dict:
-    return {"updated": None, "lanes": {}, "applied": []}
+    return {"updated": None, "lanes": {}, "applied": [], "history": []}
 
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
@@ -88,10 +89,16 @@ def _load_ladder(data_dir: Path, repair: bool = False) -> dict:
             applied_raw = []
         if not isinstance(applied_raw, list):
             raise ValueError("ladder.applied is not a list")
+        history_raw = data.get("history")
+        if history_raw is None:
+            history_raw = []
+        if not isinstance(history_raw, list):
+            raise ValueError("ladder.history is not a list")
         return {
             "updated": data.get("updated"),
             "lanes": lanes,
             "applied": [str(x) for x in applied_raw],
+            "history": [x for x in history_raw if isinstance(x, dict)],
         }
     except FileNotFoundError:
         return _empty_ladder()
@@ -184,6 +191,11 @@ def update_ladder(data_dir: Path, record: dict) -> dict:
         if not isinstance(usage, dict):
             usage = {}
 
+        history = ladder.get("history")
+        if not isinstance(history, list):
+            history = []
+        ladder["history"] = history
+
         for lane, lane_tasks in by_lane.items():
             sums = {"a": 0.0, "b": 0.0}
             counts = {"a": 0, "b": 0}
@@ -217,8 +229,36 @@ def update_ladder(data_dir: Path, record: dict) -> dict:
             elo_b = _num(slot_b.get("elo"), START_ELO)
             expected_a = 1.0 / (1.0 + 10.0 ** ((elo_b - elo_a) / 400.0))
             expected_b = 1.0 - expected_a
-            slot_a["elo"] = round(elo_a + K_FACTOR * (score_a - expected_a), 6)
-            slot_b["elo"] = round(elo_b + K_FACTOR * (score_b - expected_b), 6)
+            new_a = round(elo_a + K_FACTOR * (score_a - expected_a), 6)
+            new_b = round(elo_b + K_FACTOR * (score_b - expected_b), 6)
+            slot_a["elo"] = new_a
+            slot_b["elo"] = new_b
+
+            # Elo history: one entry per model per lane bout (roadmap: trends over time).
+            ts = _now_iso()
+            bout = round(sums["a"] - sums["b"], 6)
+            history.append({
+                "ts": ts,
+                "fight_id": fight_id or None,
+                "lane": lane,
+                "model": str(fighter_a),
+                "opponent": str(fighter_b),
+                "elo": new_a,
+                "delta": round(new_a - elo_a, 6),
+                "bout_score": bout,
+                "result": "win" if score_a >= 1.0 else ("loss" if score_a <= 0.0 else "draw"),
+            })
+            history.append({
+                "ts": ts,
+                "fight_id": fight_id or None,
+                "lane": lane,
+                "model": str(fighter_b),
+                "opponent": str(fighter_a),
+                "elo": new_b,
+                "delta": round(new_b - elo_b, 6),
+                "bout_score": round(-bout, 6),
+                "result": "win" if score_b >= 1.0 else ("loss" if score_b <= 0.0 else "draw"),
+            })
 
             for side, model_id, score, points_sum in (
                 ("a", str(fighter_a), score_a, sums["a"]),
@@ -251,12 +291,114 @@ def update_ladder(data_dir: Path, record: dict) -> dict:
         if fight_id:
             applied.append(fight_id)
         ladder["applied"] = applied[-APPLIED_CAP:]
+        ladder["history"] = history[-HISTORY_CAP:]
         ladder["updated"] = _now_iso()
         _atomic_write_json(data_dir / "ladder.json", ladder)
         return ladder
     except Exception:
         # Contract: callers get the ladder, never an exception.
         return ladder
+
+
+# ---------------------------------------------------------------------- trends
+
+
+def _trend_summary(entries: list[dict]) -> dict | None:
+    """Chronological Elo summary for one model's history entries (oldest -> newest)."""
+    if not entries:
+        return None
+    elos = [_num(e.get("elo"), START_ELO) for e in entries]
+    first, last = elos[0], elos[-1]
+    recent = elos[-6:]  # direction over the last 5 bouts (6 points)
+    net_recent = round(sum(recent[i + 1] - recent[i] for i in range(len(recent) - 1)), 2)
+    if net_recent > 0.5:
+        direction = "up"
+    elif net_recent < -0.5:
+        direction = "down"
+    else:
+        direction = "flat"
+    return {
+        "bouts": len(entries),
+        "first_elo": round(first, 2),
+        "elo": round(last, 2),
+        "delta": round(last - first, 2),
+        "min_elo": round(min(elos), 2),
+        "max_elo": round(max(elos), 2),
+        "recent_delta": net_recent,
+        "direction": direction,
+        "last_result": entries[-1].get("result"),
+    }
+
+
+def ladder_trends(
+    data_dir: Path,
+    lane: str | None = None,
+    model: str | None = None,
+    series_limit: int = 50,
+) -> dict:
+    """Elo history per model per lane (roadmap: trends over time, not just the latest rating).
+
+    One row per (lane, model) with a chronological summary plus the most recent
+    ``series_limit`` Elo points (oldest first) for charting. Optional ``lane`` /
+    ``model`` filters narrow the result.
+    """
+    data_dir = Path(data_dir)
+    try:
+        ladder = _load_ladder(data_dir, repair=False)
+    except Exception:
+        ladder = _empty_ladder()
+    history = ladder.get("history")
+    if not isinstance(history, list):
+        history = []
+    lane_filter = str(lane).strip() if lane else None
+    model_filter = str(model).strip() if model else None
+    try:
+        series_limit = max(0, int(series_limit))
+    except (TypeError, ValueError):
+        series_limit = 50
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        e_lane = str(entry.get("lane") or "")
+        e_model = str(entry.get("model") or "")
+        if not e_lane or not e_model:
+            continue
+        if lane_filter and e_lane != lane_filter:
+            continue
+        if model_filter and e_model != model_filter:
+            continue
+        groups.setdefault((e_lane, e_model), []).append(entry)
+
+    trends = []
+    for (e_lane, e_model), entries in sorted(groups.items()):
+        summary = _trend_summary(entries)
+        if summary is None:
+            continue
+        trends.append({
+            "lane": e_lane,
+            "model": e_model,
+            "short": short_name(e_model),
+            **summary,
+            "series": [
+                {
+                    "ts": e.get("ts"),
+                    "fight_id": e.get("fight_id"),
+                    "elo": round(_num(e.get("elo"), START_ELO), 2),
+                    "delta": round(_num(e.get("delta")), 2),
+                    "opponent": e.get("opponent"),
+                    "result": e.get("result"),
+                }
+                for e in (entries[-series_limit:] if series_limit else [])
+            ],
+        })
+    return {
+        "ok": True,
+        "count": len(trends),
+        "trends": trends,
+        "updated": ladder.get("updated"),
+    }
 
 
 # ----------------------------------------------------------------- recommendations
@@ -487,7 +629,18 @@ def recommend(data_dir: Path, lane: str, candidates: list[str] | None = None) ->
                 "why": NO_DATA_WHY,
             }
 
-        ranking = [_model_view(mid, models.get(mid)) for mid in pool]
+        history = ladder.get("history") if isinstance(ladder, dict) else []
+        if not isinstance(history, list):
+            history = []
+        by_model: dict[str, list[dict]] = {}
+        for entry in history:
+            if isinstance(entry, dict) and entry.get("model"):
+                by_model.setdefault(str(entry["model"]), []).append(entry)
+        ranking = []
+        for mid in pool:
+            row = _model_view(mid, models.get(mid))
+            row["trend"] = _trend_summary(by_model.get(mid, []))
+            ranking.append(row)
         ranking.sort(
             key=lambda row: (
                 -row["elo"],

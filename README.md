@@ -85,7 +85,7 @@ All nine are registered under the `model_kombat` toolset.
 | `kombat_score_answers` | Scores answer sets mechanically, writes the HTML versus scorecard, appends to history, updates the ladder and `task_stats.json`. |
 | `kombat_rematch_errors` | Re-runs only the (task, fighter) pairs that errored and merges the new answers into the stored fight. |
 | `kombat_recommend` | Per-lane knockout pick from the ladder (pick, margin, verdict, confidence, cost per point, runner-up, why); `board: true` writes card badges. |
-| `kombat_history` | Lists recent scored fights (winner, points, report path). |
+| `kombat_history` | Lists recent scored fights (winner, points, report path); `{"trends": true}` returns the per-lane Elo history instead (trend summary + chartable series per model, filterable by `lane`/`model`). |
 | `kombat_export` | Exports one past fight as JSON, Markdown or CSV under the plugin data dir. |
 
 ## Slash commands
@@ -163,6 +163,14 @@ Strong models on short, mechanical tasks tie a lot. Kombat says so instead of ma
 - **Best value on a tie.** When the margin is under 15 Elo and both models have measured cost and latency, `kombat_recommend` adds a `value_edge` block and appends one clause to `why`: `Measured: equal quality — Nano is 18.0× cheaper and 2.8× faster.` The ratios are computed from the ladder's own `cost_per_point` and `latency_per_task` (per lane, weighted across the card's lanes); under 5% counts as noise and no clause is printed. Unknown prices keep it `n/a` — never a fabricated comparison. It is a purchasing answer at equal quality, still labelled *not a performance win*.
 - **The overall pick agrees with the lane picks.** The overall pick is the weighted average lane Elo, restricted to models that have Elo in **every** lane of the card (a model that only fought one lane can't win the card). Ties break by lane picks won, then coverage, then measured cost/latency — never alphabetically, which is what used to make the overall pick disagree with a unanimous per-lane pick.
 - **Ties are the honest answer.** If you need a decision, fight a harder card (`--gauntlet`), add ties to `task_stats.json` via more fights, or accept that at this task mix the two models are equivalent — which is itself a useful purchasing answer.
+
+## Ladder trends
+
+Every scored lane bout appends one Elo history entry per model to `ladder.json` (`ts`, `fight_id`, `lane`, `model`, `opponent`, `elo`, `delta`, `bout_score`, `result`), capped at the 4,000 most recent. This records how a model's rating moved over time, not just where it ended up.
+
+- `kombat_history {"trends": true}` returns one row per (lane, model): `bouts`, `first_elo`, `elo`, `delta`, `min_elo`, `max_elo`, `recent_delta` (net over the last 5 bouts), `direction` (`up`/`down`/`flat`) and a chartable `series` of the most recent points (oldest first; `series_limit: 0` omits it). Filter with `lane` and/or `model`.
+- `kombat_recommend` ranking rows carry the same summary as a `trend` field, so a pick can say not just "leads at 1512" but "and is trending up".
+- The history is rebuilt from nothing if absent (older ladders keep working) and is idempotent per `fight_id` like the rest of the ladder.
 
 ## Cost estimation
 
@@ -324,7 +332,7 @@ schemas.py             tool schemas (what the model sees)
 tools.py               pure fight runner, scoring, history, report, kanban hookup, pricing
 engine_checks.py       mechanical check-spec scorers + hardened code/SQL runner
 lanes.py               lane classifier, task pool, intensity mix, task_stats preference, card builder
-ladder.py              per-lane Elo, recommendations, cost per point
+ladder.py              per-lane Elo + history/trends, recommendations, cost per point
 live.py                live.json state machine + event broadcast
 kanban.py              board scoreboard, agentic worker fights
 render.py              standalone HTML scorecards and arena previews
@@ -339,7 +347,7 @@ docs/ARCHITECTURE.md   module and data-flow map
 
 - Judge-assisted rounds for open-ended tasks, clearly labelled non-deterministic and never mixed into mechanical points.
 - Richer lane coverage (vision, long-context) and per-lane task packs beyond the eight current lanes.
-- Ladder trends over time (Elo history per model, not just the latest rating).
+- Trend charts in the Desktop arcade pane (the Elo history API ships in `kombat_history {"trends": true}`).
 
 ## License
 

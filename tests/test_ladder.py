@@ -170,7 +170,7 @@ def test_corrupt_file_recovery():
         assert backup.read_text(encoding="utf-8") == "{not valid json!!"
         # The rewritten ladder is valid JSON with the required top-level keys.
         reloaded = json.loads((data_dir / "ladder.json").read_text())
-        assert set(reloaded) == {"updated", "lanes", "applied"}
+        assert set(reloaded) == {"updated", "lanes", "applied", "history"}
 
 
 def test_multi_lane_one_bout_each():
