@@ -19,9 +19,9 @@ provides_tools:
 config_schema:
   fighter_a:
     type: str
-    default: "stealth/crouton-alpha"
+    default: "z-ai/glm-5.3-flash"
     label: "Fighter A (model ID)"
-    description: "First model ID to fight, e.g. stealth/crouton-alpha"
+    description: "First model ID to fight, e.g. z-ai/glm-5.3-flash"
   fighter_b:
     type: str
     default: "deepseek/deepseek-v4.1-flash-1017"

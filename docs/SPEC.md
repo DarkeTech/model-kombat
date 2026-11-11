@@ -66,7 +66,7 @@ Engine writes `live.json` (plugin data dir) atomically at every state change AND
   "status":"idle|fighting|scoring|done|error",
   "fight_id":"20261110-101500",
   "card":{"title":"...","lanes":["coding","debugging"]},
-  "fighters":{"a":{"id":"stealth/crouton-alpha","short":"Crouton"},"b":{"id":"deepseek/deepseek-v4.1-flash-1017","short":"DS-Flash"}},
+  "fighters":{"a":{"id":"z-ai/glm-5.3-flash","short":"Glm-Flash"},"b":{"id":"deepseek/deepseek-v4.1-flash-1017","short":"DS-Flash"}},
   "hp":{"a":100,"b":100},                       // 100 - damage; damage = opponent's lead in points scaled to total
   "rounds":[{"id":"R1","name":"Warm-up","points":1,"state":"waiting|fighting|done",
     "tasks":[{"id":"coding-003","lane":"coding","title":"...",

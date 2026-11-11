@@ -88,7 +88,7 @@ KOMBAT_RUN_FIGHT = {
     "parameters": {
         "type": "object",
         "properties": {
-            "fighter_a": {"type": "string", "description": "First model ID, e.g. stealth/crouton-alpha"},
+            "fighter_a": {"type": "string", "description": "First model ID, e.g. z-ai/glm-5.3-flash"},
             "fighter_b": {"type": "string", "description": "Second model ID, e.g. deepseek/deepseek-v4.1-flash-1017"},
             "background": {
                 "type": "boolean",
@@ -137,7 +137,7 @@ KOMBAT_RUN_AGENTIC_FIGHT = {
     "parameters": {
         "type": "object",
         "properties": {
-            "fighter_a": {"type": "string", "description": "First model ID, e.g. stealth/crouton-alpha"},
+            "fighter_a": {"type": "string", "description": "First model ID, e.g. z-ai/glm-5.3-flash"},
             "fighter_b": {"type": "string", "description": "Second model ID, e.g. deepseek/deepseek-v4.1-flash-1017"},
             "tasks": {
                 "type": "array",

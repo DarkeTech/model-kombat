@@ -98,7 +98,7 @@ def _scout_summary(raw: str) -> str:
         lines.append(f"  {rnd.get('id')} {rnd.get('name')} ({rnd.get('points', 1)}pt/task): {tasks}")
     if card.get("sudden_death_task"):
         lines.append(f"  sudden death: {card['sudden_death_task']} (fought up front, used only on a tie)")
-    fighter_a = tools._cfg("fighter_a", "stealth/crouton-alpha") or "stealth/crouton-alpha"
+    fighter_a = tools._cfg("fighter_a", "z-ai/glm-5.3-flash") or "z-ai/glm-5.3-flash"
     fighter_b = tools._cfg("fighter_b", "deepseek/deepseek-v4.1-flash-1017") or "deepseek/deepseek-v4.1-flash-1017"
     lines.append("")
     lines.append(f"Next: /kombat fight {fighter_a} vs {fighter_b} --card {card_id}")
@@ -158,7 +158,7 @@ def _handle_kombat(ctx, raw_args: str) -> str:
             return (
                 f"Usage: /kombat {sub} <model-a> vs <model-b> [--card <card-id>] "
                 f"[--lanes coding,sql] [--seed N] [--hard|--gauntlet]\n"
-                "Example: /kombat fight stealth/crouton-alpha vs deepseek/deepseek-v4.1-flash-1017 "
+                "Example: /kombat fight z-ai/glm-5.3-flash vs deepseek/deepseek-v4.1-flash-1017 "
                 "--card card-15b9f4edc0\n"
                 "Requires plugins.entries.model-kombat.llm.allow_model_override: true in config.yaml."
             )

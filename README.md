@@ -10,7 +10,7 @@ hermes plugins install model-kombat     # once listed in the catalog
 ## The 3-step PM workflow
 
 1. **Scout the work.** `/kombat scout card:t_9f21c4` (or paste the task text, or `board` for every open card). Kombat reads the card, classifies it into lanes, and returns a fight card with rounds, stakes, task IDs and the reasons each lane was picked. Add `--hard` or `--gauntlet` to raise the difficulty mix. The same input always builds the same card.
-2. **Fight.** Ask in chat: *"Fight `stealth/crouton-alpha` vs `deepseek/deepseek-v4.1-flash-1017` on that card."* The bundled skill calls `kombat_run_fight` with the scouted card (object or `card-…` id), both models answer every task in it, and the arcade pane plus the `model-kombat` kanban board update live while answers land. Pure fights run in the background, so the chat stays usable. `/kombat fight <A> vs <B>` with no `--card` runs the fixed legacy suite instead of a scouted card.
+2. **Fight.** Ask in chat: *"Fight `z-ai/glm-5.3-flash` vs `deepseek/deepseek-v4.1-flash-1017` on that card."* The bundled skill calls `kombat_run_fight` with the scouted card (object or `card-…` id), both models answer every task in it, and the arcade pane plus the `model-kombat` kanban board update live while answers land. Pure fights run in the background, so the chat stays usable. `/kombat fight <A> vs <B>` with no `--card` runs the fixed legacy suite instead of a scouted card.
 3. **Read the verdict.** `/kombat score` scores the fight and writes the HTML versus scorecard; `kombat_recommend` (or `/kombat recommend board`) writes the per-lane knockout pick into `recommendations.json`, which the Desktop paints as a badge on each kanban card — pick, lane, verdict, confidence, Elo.
 
 ## Lanes
@@ -52,7 +52,7 @@ Project tasks in `<cwd>/.kombat/tasks.json` (same schema) are mixed into the lan
 ```bash
 /kombat scout card:t_9f21c4 --hard        # skip the easy warm-ups
 /kombat scout card:t_9f21c4 --gauntlet    # every task is difficulty 3
-/kombat fight stealth/crouton-alpha vs deepseek/deepseek-v4.1-flash-1017 --card card-15b9f4edc0 --gauntlet
+/kombat fight z-ai/glm-5.3-flash vs deepseek/deepseek-v4.1-flash-1017 --card card-15b9f4edc0 --gauntlet
 ```
 
 Intensity is part of the card id, so a gauntlet card and a standard card are different cards and are never confused in `cards.json`. On a fresh pool with too few difficulty-3 tasks, the builder fills short rounds from neighbouring difficulties rather than shipping an empty round — so `gauntlet` degrades to "as hard as the pool allows", not to a broken card.
@@ -236,7 +236,7 @@ plugins:
         allow_model_override: true
         # recommended: bound spend to the models you actually want to compare
         allowed_models:
-          - stealth/crouton-alpha
+          - z-ai/glm-5.3-flash
           - deepseek/deepseek-v4.1-flash-1017
       granted_capabilities: ["llm.model_override"]
 ```
@@ -249,7 +249,7 @@ Settings → Plugins → Model Kombat (all keys from `plugin.yaml`):
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `fighter_a` | `stealth/crouton-alpha` | Default first model ID. |
+| `fighter_a` | `z-ai/glm-5.3-flash` | Default first model ID. |
 | `fighter_b` | `deepseek/deepseek-v4.1-flash-1017` | Default second model ID. |
 | `temperature` | `0` | Applied to both fighters; 0 keeps the comparison fair. |
 | `default_intensity` | `standard` | Difficulty mix when a scout/fight does not pass `intensity`: `standard`, `hard` or `gauntlet`. |
