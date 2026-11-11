@@ -26,6 +26,7 @@ import re
 import shlex
 import time
 from datetime import datetime
+from pathlib import Path
 
 BOARD = "model-kombat"
 
@@ -75,6 +76,25 @@ def _dispatch(command: str) -> tuple[bool, str]:
 
 def _cli(*args: str) -> str:
     return "hermes kanban " + shlex.join(list(args))
+
+
+def _cli_path(path) -> str:
+    """A filesystem path as a forward-slash string for kanban argv.
+
+    Every board call leaves this module as ONE shell string handed to
+    ``ctx.dispatch_tool("terminal")``, so a path carrying Windows separators is
+    at the mercy of whichever shell layer the host uses to run it: that layer
+    collapses doubled separators to single ones before the CLI sees them, so a
+    ``json.dumps`` payload arrives with an unescaped separator and the
+    ``--metadata`` parser rejects it ("Invalid escape"). The parent FIGHT card
+    then never completes and the bout records an error on its last write. An
+    ``--attach`` path is exposed to the same collapsing, just less visibly.
+
+    POSIX separators carry no escaping hazard and are accepted by every
+    consumer (argparse, the kanban CLI, Windows file APIs), so paths are
+    normalised here rather than shell-quoted harder.
+    """
+    return Path(str(path)).as_posix()
 
 
 def _extract_json(text: str):
@@ -492,16 +512,16 @@ class Scoreboard:
         if self.ids["parent"]:
             # Attach works even on done cards; complete only if not already done.
             if report_path and not str(report_path).startswith("report render failed"):
-                self._run(_cli("--board", BOARD, "attach", self.ids["parent"], str(report_path)))
+                self._run(_cli("--board", BOARD, "attach", self.ids["parent"], _cli_path(report_path)))
             if not self._card_done(self.ids["parent"]):
                 self._run(
                     _cli("--board", BOARD, "complete", self.ids["parent"],
                          "--result", f"Winner: {winner}", "--metadata",
-                         json.dumps({"winner": winner, "report": str(report_path)}))
+                         json.dumps({"winner": winner, "report": _cli_path(report_path)}))
                 )
             else:
                 self._run(_cli("--board", BOARD, "comment", self.ids["parent"],
-                               f"Re-scored. Winner: {winner}. Report: {report_path}"))
+                               f"Re-scored. Winner: {winner}. Report: {_cli_path(report_path)}"))
         try:
             clear_bout(self.fight_key, self.ids)
         except Exception:  # noqa: BLE001

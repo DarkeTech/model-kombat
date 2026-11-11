@@ -310,6 +310,7 @@ Read this before installing.
 | `code_exec` tasks all skipped | `allow_code_execution` is false. That is the default; the tasks are excluded from points. |
 | Agentic tasks stuck `ready` | The gateway dispatcher isn't running: `hermes gateway start`. Pure fights don't need it. |
 | Board missing or empty | `show_on_kanban` is off, or the host `terminal` command failed (board updates are best-effort). Check `hermes kanban boards`. |
+| Windows: `kanban: --metadata: Invalid \escape` | Fixed in 0.7.1. The Windows terminal host collapses each `\\` to `\` before the CLI parses the argument, so a JSON payload quoting a native path (`C:\Users\…`) arrived as invalid JSON and the FIGHT parent card never completed. Paths in board argv now go out as forward-slash strings (`_cli_path` in `kanban.py`), which no shell layer rewrites. |
 | Badge shows `≈Model` | Correct: the top-two Elo margin is under 15, so the verdict is "no clear edge". Fight a harder card or more bouts to separate the models. |
 | Pane or `/kombat` page blank | The dashboard backend isn't serving; confirm the gateway is up and `GET /api/plugins/model-kombat/health` responds. The pane falls back to polling only if the event stream is unavailable, not if the API is down. |
 
