@@ -40,6 +40,28 @@ def _read_json(name: str):
         return None
 
 
+def _ladder_module():
+    """The plugin's ladder module, importable from any host layout.
+
+    The plugin host normally puts the plugin root on ``sys.path`` (plain
+    ``import ladder``); tests import this file as ``dashboard.plugin_api``
+    with the repo root on ``sys.path``. The explicit ``sys.path`` fallback
+    covers any loader that does neither.
+    """
+    try:
+        import ladder as _ladder  # plugin root already importable
+        return _ladder
+    except ImportError:
+        pass
+    import sys
+
+    plugin_root = str(Path(__file__).resolve().parent.parent)
+    if plugin_root not in sys.path:
+        sys.path.insert(0, plugin_root)
+    import ladder as _ladder
+    return _ladder
+
+
 def _idle_live() -> dict:
     return {
         "status": "idle", "fight_id": None, "card": {"title": None, "lanes": []},
@@ -72,6 +94,30 @@ def ladder():
         return {"updated": None, "lanes": {}}
     except Exception:
         return {"updated": None, "lanes": {}}
+
+
+@router.get("/trends")
+def trends(lane: str | None = None, model: str | None = None, series_limit: int = 40):
+    """Per-model Elo trends (roadmap: ladder trends over time).
+
+    Wraps ``ladder.ladder_trends``: one row per (lane, model) with a summary
+    (bouts, elo, delta, direction, ...) plus the most recent ``series_limit``
+    Elo points for the pane sparkline. Missing/corrupt ladder yields an empty
+    trend list — never raises.
+    """
+    try:
+        limit = max(0, min(400, int(series_limit)))
+    except (TypeError, ValueError):
+        limit = 40
+    try:
+        data = _ladder_module().ladder_trends(
+            _data_dir(), lane=lane, model=model, series_limit=limit
+        )
+        if isinstance(data, dict) and data.get("ok"):
+            return data
+        return {"ok": True, "count": 0, "trends": []}
+    except Exception:
+        return {"ok": True, "count": 0, "trends": []}
 
 
 @router.get("/history")

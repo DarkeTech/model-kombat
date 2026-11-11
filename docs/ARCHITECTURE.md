@@ -54,7 +54,8 @@ fight flows from a kanban card to a badge on that card.
                       │                                    │ plugin_api.py    │
                       │  broadcast_plugin_event            │ GET /live        │
                       │  "plugin.model-kombat.            │     /ladder      │
-                      │   fight.updated"                   │     /history     │
+                      │   fight.updated"                   │     /trends      │
+                      │                                    │     /history     │
                       │                                    │     /recommend…  │
                       │                                    │     /health      │
                       │                                    └────────┬─────────┘

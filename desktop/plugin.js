@@ -23,6 +23,11 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 const LIVE_EVENT = 'plugin.model-kombat.fight.updated'
 const LIVE_POLL_MS = 5000
 const RECS_POLL_MS = 30000
+// Trends move only when the ladder moves (a scored fight), so a slow poll is
+// plenty; fight-end pushes re-read it via LIVE_EVENT.
+const TRENDS_POLL_MS = 60000
+// Keep the pane section bounded — the page shows the same component.
+const TRENDS_PANE_LIMIT = 8
 
 // --- stores (module scope; reset on load, updated from register()) ----------
 
@@ -73,6 +78,29 @@ function getRecSnapshot() {
 
 function useRecs() {
   return useSyncExternalStore(subscribeRec, getRecSnapshot, getRecSnapshot)
+}
+
+// Ladder trends (per model per lane Elo history) — pane sparklines. Same
+// external-store shape as recs: module scope, fed from register()'s poll.
+const trendListeners = new Set()
+let trendState = { trends: [], loading: true, error: null }
+
+function setTrendState(patch) {
+  trendState = { ...trendState, ...patch }
+  for (const fn of trendListeners) fn()
+}
+
+function subscribeTrend(fn) {
+  trendListeners.add(fn)
+  return () => trendListeners.delete(fn)
+}
+
+function getTrendSnapshot() {
+  return trendState
+}
+
+function useTrends() {
+  return useSyncExternalStore(subscribeTrend, getTrendSnapshot, getTrendSnapshot)
 }
 
 // --- small presentational helpers ------------------------------------------
@@ -488,6 +516,109 @@ function wordmarkChildren() {
   return [wordmarkEmblem(false), wordmarkText(), wordmarkEmblem(true)]
 }
 
+// --- ladder trends (pane + page section) --------------------------------------
+
+const TREND_GLYPH = { up: '▲', down: '▼', flat: '◆' }
+const TREND_COLOR = {
+  up: 'var(--ui-accent)',
+  down: 'var(--ui-danger)',
+  flat: 'var(--ui-text-tertiary)'
+}
+
+function fmtDelta(value) {
+  const n = Number(value) || 0
+  return `${n >= 0 ? '+' : ''}${n.toFixed(1)}`
+}
+
+/** Inline SVG sparkline of a trend row's Elo series (oldest -> newest). */
+function sparkline(series, direction) {
+  const w = 84
+  const h = 22
+  const pad = 2
+  const points = (Array.isArray(series) ? series : [])
+    .map(pt => Number(pt && pt.elo))
+    .filter(v => Number.isFinite(v))
+  const color = TREND_COLOR[direction] || TREND_COLOR.flat
+  if (points.length === 0) {
+    return jsx('span', { style: { width: `${w}px`, flexShrink: 0 }, 'aria-hidden': true })
+  }
+  const min = Math.min(...points)
+  const max = Math.max(...points)
+  const span = max - min
+  const coords = points.map((v, i) => {
+    const x = points.length === 1 ? w / 2 : pad + (i / (points.length - 1)) * (w - 2 * pad)
+    const y = span === 0 ? h / 2 : h - pad - ((v - min) / span) * (h - 2 * pad)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  })
+  const last = coords[coords.length - 1].split(',')
+  return jsx('svg', {
+    width: w,
+    height: h,
+    viewBox: `0 0 ${w} ${h}`,
+    'aria-hidden': true,
+    focusable: 'false',
+    style: { flexShrink: 0 },
+    children: [
+      jsx('polyline', {
+        points: coords.join(' '),
+        fill: 'none',
+        stroke: color,
+        strokeWidth: 1.5,
+        strokeLinejoin: 'round',
+        strokeLinecap: 'round'
+      }),
+      jsx('circle', { cx: last[0], cy: last[1], r: 2, fill: color })
+    ]
+  })
+}
+
+function trendRow(t) {
+  const glyph = TREND_GLYPH[t.direction] || TREND_GLYPH.flat
+  return jsxs('div', {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: '3px 0',
+      borderBottom: '1px solid var(--ui-border)'
+    },
+    children: [
+      jsx('span', {
+        title: `net ${fmtDelta(t.recent_delta)} over the last bouts`,
+        style: { color: TREND_COLOR[t.direction] || TREND_COLOR.flat, width: '14px', textAlign: 'center', flexShrink: 0 },
+        children: glyph
+      }),
+      jsx('span', {
+        style: { color: 'var(--ui-text)', fontSize: '0.78rem', width: '30%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        children: t.short || t.model || 'Model'
+      }),
+      sparkline(t.series, t.direction),
+      jsx('span', {
+        style: { color: 'var(--ui-text-tertiary)', fontSize: '0.72rem', marginLeft: 'auto', whiteSpace: 'nowrap' },
+        children: `${Math.round(t.elo)} (${fmtDelta(t.delta)}) · ${t.bouts}`
+      })
+    ]
+  })
+}
+
+function TrendsSection({ limit }) {
+  const { trends, loading, error } = useTrends()
+  const rows = (trends || []).slice(0, limit || trends.length)
+  return jsxs('div', { style: { marginTop: '16px' }, children: [
+    jsx('h2', { style: { fontSize: '1rem', letterSpacing: '0.12em', marginTop: '4px' }, children: 'LADDER TRENDS' }),
+    error && !trends.length
+      ? backendNote(error)
+      : rows.length
+        ? jsx('div', {}, rows.map((t, i) => jsx('div', { key: `${t.lane}:${t.model}`, children: [
+            (i === 0 || rows[i - 1].lane !== t.lane)
+              ? jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: '0.68rem', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: '6px' }, children: t.lane })
+              : null,
+            trendRow(t)
+          ] })))
+        : jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: '0.8rem' }, children: loading ? 'Loading trends…' : 'No trend history yet — trends start with the first scored fight.' })
+  ] })
+}
+
 // --- pane -------------------------------------------------------------------
 
 function KombatPane() {
@@ -502,7 +633,8 @@ function KombatPane() {
     return jsxs('div', { style: { padding: '12px' }, children: [
       jsx('div', { style: { fontWeight: 400, color: 'var(--ui-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }, children: wordmarkChildren() }),
       backendNote(error || 'no data yet'),
-      jsx('div', { style: { fontSize: '0.75rem', color: 'var(--ui-text-tertiary)', marginTop: '4px' }, children: 'Run a fight from the Model Kombat page.' })
+      jsx('div', { style: { fontSize: '0.75rem', color: 'var(--ui-text-tertiary)', marginTop: '4px' }, children: 'Run a fight from the Model Kombat page.' }),
+      TrendsSection({ limit: TRENDS_PANE_LIMIT })
     ] })
   }
   return jsxs('div', {
@@ -518,7 +650,8 @@ function KombatPane() {
         children: wordmarkChildren()
       }),
       arenaView(live),
-      error ? backendNote(error) : null
+      error ? backendNote(error) : null,
+      TrendsSection({ limit: TRENDS_PANE_LIMIT })
     ]
   })
 }
@@ -646,6 +779,7 @@ function KombatPage({ ctx }) {
             ]
           })
         : jsx('div', { style: { color: 'var(--ui-text-tertiary)', fontSize: '0.8rem' }, children: history ? 'No fights recorded.' : 'Loading history…' }),
+      TrendsSection({}),
       loadError && live
         ? backendNote(loadError)
         : null
@@ -737,13 +871,24 @@ export default {
       }
     }
 
+    const loadTrends = async () => {
+      try {
+        const data = await ctx.rest('/trends')
+        setTrendState({ trends: (data && data.trends) || [], loading: false, error: null })
+      } catch (err) {
+        setTrendState({ loading: false, error: err })
+      }
+    }
+
     loadLive()
     loadRecs()
+    loadTrends()
 
     // Polling fallback: ctx.setInterval is tracked by the host and disposed
     // with the plugin (bare window.setInterval would survive disable).
     ctx.setInterval(loadLive, LIVE_POLL_MS)
     ctx.setInterval(loadRecs, RECS_POLL_MS)
+    ctx.setInterval(loadTrends, TRENDS_POLL_MS)
 
     // Live push: the engine broadcasts fight updates over the global stream.
     // ctx.onEvent is SDK-tracked (PluginContext.onEvent: removed on
@@ -753,6 +898,8 @@ export default {
       const payload = event && event.payload
       if (payload && typeof payload === 'object') {
         setLive({ live: payload, loading: false, error: null })
+        // A scored fight moves the ladder — refresh trend sparklines.
+        loadTrends()
       }
     })
 

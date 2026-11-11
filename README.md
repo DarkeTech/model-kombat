@@ -170,6 +170,7 @@ Every scored lane bout appends one Elo history entry per model to `ladder.json` 
 
 - `kombat_history {"trends": true}` returns one row per (lane, model): `bouts`, `first_elo`, `elo`, `delta`, `min_elo`, `max_elo`, `recent_delta` (net over the last 5 bouts), `direction` (`up`/`down`/`flat`) and a chartable `series` of the most recent points (oldest first; `series_limit: 0` omits it). Filter with `lane` and/or `model`.
 - `kombat_recommend` ranking rows carry the same summary as a `trend` field, so a pick can say not just "leads at 1512" but "and is trending up".
+- The Desktop arcade pane and the Model Kombat page render a **Ladder Trends** section from the read-only `GET /trends` dashboard endpoint: per lane, each model's direction glyph (▲/▼/◆), an Elo sparkline and its current rating with net delta and bout count. It refreshes on a slow poll and again whenever a fight broadcast lands (a scored fight is the only thing that moves the ladder).
 - The history is rebuilt from nothing if absent (older ladders keep working) and is idempotent per `fight_id` like the rest of the ladder.
 
 ## Cost estimation
@@ -291,7 +292,7 @@ Read this before installing.
   **It is defense-in-depth, not a sandbox.** It does not stop direct syscalls, code paths in already-loaded C extensions, `ctypes` reached through a preloaded shared object, or anything else that never emits a Python audit event; reads outside the tempdir are restricted only on the same best-effort basis. The code runs as your user. Enable it only for models you are willing to trust with that.
 - **Kanban writes.** With `show_on_kanban` on (default), the plugin creates a dedicated `model-kombat` board, a parent scoreboard card and one card per task through the host's `terminal` tool, i.e. through Hermes's normal command approval. Cards are **unassigned display cards** and are never dispatched to a worker. Board updates are best-effort: a failure never fails the fight.
 - **File writes.** Reports, `live.json`, `ladder.json`, `recommendations.json`, `cards.json`, `task_stats.json`, `fights.jsonl` and exports are written under the plugin data dir (`$HERMES_HOME/plugin-data/model-kombat/`, else `~/.hermes/plugin-data/model-kombat/`). Nothing else on disk is written.
-- **Desktop plugin and dashboard API.** `desktop/plugin.js` runs in the Desktop renderer using only the plugin SDK (pane, route, sidebar, status chip, palette command, kanban badges); it registers no DOM patches and loads no remote code. `dashboard/plugin_api.py` exposes read-only `GET /live`, `/ladder`, `/history`, `/recommendations`, `/health`, mounted under `/api/plugins/model-kombat/`.
+- **Desktop plugin and dashboard API.** `desktop/plugin.js` runs in the Desktop renderer using only the plugin SDK (pane, route, sidebar, status chip, palette command, kanban badges); it registers no DOM patches and loads no remote code. `dashboard/plugin_api.py` exposes read-only `GET /live`, `/ladder`, `/trends`, `/history`, `/recommendations`, `/health`, mounted under `/api/plugins/model-kombat/`.
 - **Telemetry.** None. No analytics, no phone-home, no update check.
 - **Credentials.** Never read. No `.env`, `auth.json`, keychain or vendor token files; the plugin has no `requires_env` and only ever asks the host to make a call. Its only declared capability is `llm.model_override`.
 
@@ -347,7 +348,6 @@ docs/ARCHITECTURE.md   module and data-flow map
 
 - Judge-assisted rounds for open-ended tasks, clearly labelled non-deterministic and never mixed into mechanical points.
 - Richer lane coverage (vision, long-context) and per-lane task packs beyond the eight current lanes.
-- Trend charts in the Desktop arcade pane (the Elo history API ships in `kombat_history {"trends": true}`).
 
 ## License
 

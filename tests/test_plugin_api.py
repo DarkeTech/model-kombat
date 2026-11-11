@@ -117,3 +117,70 @@ def test_direct_calls(tmp_path, monkeypatch):
     assert api.history(limit=5) == []
     assert api.recommendations() == {}
     assert api.cards() == []
+    empty = api.trends()
+    assert empty["ok"] is True and empty["count"] == 0 and empty["trends"] == []
+
+
+# --- /trends -------------------------------------------------------------------
+
+
+def _write_ladder(tmp_path, history):
+    (tmp_path / "ladder.json").write_text(
+        json.dumps({"updated": "2026-11-11T10:00:00Z", "lanes": {}, "applied": [], "history": history}),
+        encoding="utf-8",
+    )
+
+
+def test_trends_empty_default(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    r = client.get("/trends")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["count"] == 0 and body["trends"] == []
+
+
+def test_trends_rows_series_filters(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    ds = "deepseek/deepseek-v4.1-flash-1017"
+    cr = "stealth/crouton-alpha"
+    _write_ladder(tmp_path, [
+        {"ts": "2026-11-11T09:00:00Z", "fight_id": "f1", "lane": "coding", "model": ds,
+         "opponent": cr, "elo": 1512.0, "delta": 12.0, "bout_score": 1.0, "result": "win"},
+        {"ts": "2026-11-11T09:00:00Z", "fight_id": "f1", "lane": "coding", "model": cr,
+         "opponent": ds, "elo": 1488.0, "delta": -12.0, "bout_score": 0.0, "result": "loss"},
+        {"ts": "2026-11-11T09:30:00Z", "fight_id": "f2", "lane": "coding", "model": ds,
+         "opponent": cr, "elo": 1524.0, "delta": 12.0, "bout_score": 1.0, "result": "win"},
+        {"ts": "2026-11-11T09:30:00Z", "fight_id": "f2", "lane": "coding", "model": cr,
+         "opponent": ds, "elo": 1476.0, "delta": -12.0, "bout_score": 0.0, "result": "loss"},
+    ])
+    r = client.get("/trends")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    rows = r.json()["trends"]
+    assert r.json()["count"] == 2
+    assert [(row["lane"], row["model"]) for row in rows] == [("coding", ds), ("coding", cr)]
+    first = rows[0]
+    assert first["short"] == "DS-Flash"
+    assert (first["bouts"], first["elo"], first["delta"]) == (2, 1524.0, 12.0)
+    assert first["direction"] == "up"
+    assert rows[1]["direction"] == "down"
+    assert [pt["elo"] for pt in first["series"]] == [1512.0, 1524.0]
+
+    # Filters narrow the result; series_limit=0 drops the series payload.
+    assert client.get("/trends", params={"lane": "debugging"}).json()["count"] == 0
+    assert client.get("/trends", params={"model": ds}).json()["count"] == 1
+    assert client.get("/trends", params={"series_limit": 0}).json()["trends"][0]["series"] == []
+
+
+def test_trends_corrupt_ladder_never_raises(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    (tmp_path / "ladder.json").write_text("{ not json", encoding="utf-8")
+    r = client.get("/trends")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["count"] == 0 and body["trends"] == []
+    # A legacy ladder without the history key trends as empty, not an error.
+    (tmp_path / "ladder.json").write_text(
+        json.dumps({"updated": "2026-11-10T10:00:00Z", "lanes": {"coding": {"models": {}}}}),
+        encoding="utf-8",
+    )
+    assert client.get("/trends").json()["count"] == 0
