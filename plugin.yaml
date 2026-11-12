@@ -1,5 +1,5 @@
 name: model-kombat
-version: 0.7.1
+version: 0.7.2
 description: "Model Kombat — pit two Hermes models against each other on an adaptive lane card (Warm-up, Main Event, Championship + sudden death) or the fixed suite, scored mechanically (executed code, exact counts, synonym-aware facts, SQL rows), with a local lane scout, live kanban scoreboard and optional agentic worker fights."
 author: DarkeTech
 kind: standalone
@@ -98,7 +98,7 @@ config_schema:
     type: bool
     default: false
     label: "Allow executing model-written code"
-    description: "Code tasks (T2/T6/T7/T8) are only executed when this is on. Runs as your user with a timeout — NOT a security sandbox. Off = those rounds are excluded from points, never run."
+    description: "Code tasks (T2/T6/T7/T8) are only executed when this is on. This setting is the only way to enable execution — no tool argument can turn it on. Runs as your user in a hardened subprocess (empty env, python -I, rlimits, audit hook) — NOT a security sandbox. Off = those rounds are excluded from points, never run."
   show_on_kanban:
     type: bool
     default: true

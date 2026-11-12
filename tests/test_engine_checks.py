@@ -492,6 +492,28 @@ def test_sql_exec_malformed():
                       "```sql\nSELECT nope FROM missing\n```")
     assert query_error["status"] == "scored" and query_error["score"] == 0.0
 
+def test_sql_exec_setup_cannot_attach():
+    """.kombat/tasks.json can come from any repo, so setup must never mount a file."""
+    canary = Path(tempfile.gettempdir()) / f"kombat-attach-{os.getpid()}.db"
+    canary.write_text("", encoding="utf-8")
+    try:
+        for snippet in (f"ATTACH DATABASE '{canary}' AS ext",
+                        "attach database ':memory:' as ext"):
+            out = run({"type": "sql_exec", "setup": [snippet], "expect_rows": [[1]]},
+                      "```sql\nSELECT 1\n```")
+            assert out["status"] == "errored", out
+            assert "ATTACH/DETACH" in out["detail"], out
+        detach = run({"type": "sql_exec", "setup": ["DETACH DATABASE ext"], "expect_rows": [[1]]},
+                     "```sql\nSELECT 1\n```")
+        assert detach["status"] == "errored", detach
+        # a comment that merely mentions ATTACH is not an ATTACH
+        ok = {"type": "sql_exec",
+              "setup": ["CREATE TABLE t (a INTEGER)", "-- never ATTACH a file here",
+                        "INSERT INTO t VALUES (1)"],
+              "expect_rows": [[1]]}
+        assert run(ok, "```sql\nSELECT a FROM t\n```")["score"] == 1.0
+    finally:
+        canary.unlink(missing_ok=True)
 
 # ------------------------------------------------------------------ isolation guard
 
@@ -580,5 +602,6 @@ if __name__ == "__main__":
     test_sql_exec_pass_fail()
     test_sql_exec_cte_and_rejections()
     test_sql_exec_malformed()
+    test_sql_exec_setup_cannot_attach()
     test_unknown_type_and_never_raises()
     print("all engine_checks tests passed")

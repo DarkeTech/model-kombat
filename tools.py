@@ -16,9 +16,7 @@ import json
 import os
 import random
 import re
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -546,15 +544,19 @@ def score_check(check: dict, answer: str, allow_exec: bool = False) -> dict:
 def _data_dir() -> Path:
     if _DATA_DIR_OVERRIDE is not None:
         return _DATA_DIR_OVERRIDE
-    home = os.environ.get("HERMES_HOME")
-    if home:
-        return Path(home) / "plugin-data" / "model-kombat"
+    # Profile-aware first: the host knows which profile this plugin instance
+    # belongs to. HERMES_HOME / ~/.hermes fallbacks are for hosts without
+    # plugin_storage (or a bare top-level import in tests).
     try:
         from plugins.plugin_storage import plugin_data_dir  # type: ignore
 
         return Path(plugin_data_dir("model-kombat"))
     except Exception:
-        return Path.home() / ".hermes" / "plugin-data" / "model-kombat"
+        pass
+    home = os.environ.get("HERMES_HOME")
+    if home:
+        return Path(home) / "plugin-data" / "model-kombat"
+    return Path.home() / ".hermes" / "plugin-data" / "model-kombat"
 
 
 def _cfg(key: str, default=None):
@@ -570,6 +572,28 @@ def _cfg(key: str, default=None):
             return default
     except Exception:
         return default
+
+
+def _cap(key: str, raw, default, cast=float, zero_is_unlimited: bool = False):
+    """A configured limit that a tool argument may LOWER but never raise.
+
+    Spend and wall-clock caps are user settings; tool arguments are model
+    input, so they only ever tighten a cap. ``zero_is_unlimited`` covers
+    max_fight_seconds, where 0 means "no wall cap" in the engine — there an
+    argument of 0 must not be read as "remove the cap", it falls back to the
+    configured value.
+    """
+    configured = cast(_cfg(key, default))
+    if raw is None:
+        return configured
+    requested = cast(raw)
+    if zero_is_unlimited:
+        if requested <= 0:
+            return configured
+        if configured <= 0:  # the user disabled this cap entirely
+            return requested
+        return min(requested, configured)
+    return max(0, min(requested, configured))
 
 
 def _now_iso() -> str:
@@ -1408,8 +1432,8 @@ def _run_fight(args: dict, **kwargs) -> str:
     try:
         temperature = float(args.get("temperature", _cfg("temperature", 0)))
         max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
-        budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
-        token_budget = int(args.get("budget_tokens", _cfg("max_fight_tokens", 400000)))
+        budget = _cap("max_fight_cost_usd", args.get("budget_usd"), 2.0)
+        token_budget = _cap("max_fight_tokens", args.get("budget_tokens"), 400000, cast=int)
         timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
         pace_ms = float(args.get("pace_ms", _cfg("pace_ms", 0)) or 0)
         max_rate_wait_s = float(args.get("max_rate_wait_s", _cfg("max_rate_wait_s", 120)) or 0)
@@ -1419,8 +1443,8 @@ def _run_fight(args: dict, **kwargs) -> str:
             auto_rematch_cfg = _cfg("auto_rematch", True)
         auto_rematch = bool(auto_rematch_cfg)
         rematch_passes = max(0, min(2, int(args.get("max_rematch_passes", 2))))
-        max_fight_seconds = float(
-            args.get("max_fight_seconds", _cfg("max_fight_seconds", 360)) or 0
+        max_fight_seconds = _cap(
+            "max_fight_seconds", args.get("max_fight_seconds"), 360, zero_is_unlimited=True
         )
     except (TypeError, ValueError):
         return _err("temperature/max_tokens/budget_usd/timeout_s/pace_ms must be numbers.")
@@ -1869,8 +1893,8 @@ def kombat_rematch_errors(args: dict, **kwargs) -> str:
     try:
         temperature = float(args.get("temperature", _cfg("temperature", 0)))
         max_tokens = int(args.get("max_tokens", _cfg("max_tokens", 2000)))
-        budget = float(args.get("budget_usd", _cfg("max_fight_cost_usd", 2.0)))
-        token_budget = int(args.get("budget_tokens", _cfg("max_fight_tokens", 400000)))
+        budget = _cap("max_fight_cost_usd", args.get("budget_usd"), 2.0)
+        token_budget = _cap("max_fight_tokens", args.get("budget_tokens"), 400000, cast=int)
         timeout_s = float(args.get("timeout_s", _cfg("llm_timeout_s", 180)))
         pace_ms = float(args.get("pace_ms", _cfg("pace_ms", 0)) or 0)
         max_rate_wait_s = float(args.get("max_rate_wait_s", _cfg("max_rate_wait_s", 120)) or 0)
@@ -2109,27 +2133,20 @@ def _extract_code(answer: str, marker: str) -> str | None:
 
 
 def _execute_candidate(code: str, harness: str, timeout: int = 10) -> dict:
-    """Run candidate code + harness in a subprocess. NOT a security sandbox:
-    it runs as the user with a timeout and a stripped-down env. Only enable
-    code execution for models you trust (see README disclosure)."""
+    """Run candidate code + the legacy checks harness in the hardened runner.
+
+    Delegates to engine_checks.run_legacy_harness, so the legacy T2/T6/T7/T8
+    tasks get exactly the hardening the code_exec scorer gets (empty env,
+    python -I, rlimits, audit hook, import blocker). Still NOT a security
+    sandbox (see README disclosure): the hook is Python-level, so treat all
+    candidate code as untrusted.
+    """
     try:
-        with tempfile.TemporaryDirectory(prefix="kombat-") as td:
-            script = Path(td) / "candidate.py"
-            script.write_text(code + "\n" + harness, encoding="utf-8")
-            env = {"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": "0"}
-            proc = subprocess.run(
-                [sys.executable, str(script)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=td,
-                env=env,
-            )
-        passed = proc.returncode == 0 and "ALL CHECKS PASSED" in proc.stdout
-        lines = (proc.stdout + proc.stderr).strip().splitlines()
-        return {"passed": passed, "details": lines[-3:] if lines else ["no output"]}
-    except subprocess.TimeoutExpired:
-        return {"passed": False, "details": [f"timeout after {timeout}s"]}
+        from . import engine_checks as _ec
+    except ImportError:  # top-level import outside the plugin package (tests)
+        import engine_checks as _ec  # type: ignore
+    try:
+        return _ec.run_legacy_harness(code, harness, timeout)
     except Exception as exc:
         return {"passed": False, "details": [f"harness error: {exc}"]}
 
@@ -2307,7 +2324,7 @@ small{{color:#aaa}} .winner{{text-align:center;font-size:1.2rem;margin:1rem 0}}<
 {''.join(sections)}
 <h2>Usage</h2>
 <table><tr><th>Fighter</th><th>Latency</th><th>Tokens</th><th>Est. cost</th></tr>{usage_rows}</table>
-<p><small>Scored mechanically by Model Kombat. Code rounds execute only with allow_code_execution=true (subprocess, timeout, not a security sandbox). Errored/skipped rounds are excluded from points.</small></p>
+<p><small>Scored mechanically by Model Kombat. Code rounds execute only when the allow_code_execution plugin setting is on (subprocess, timeout, not a security sandbox); a tool argument cannot switch that setting on. Errored/skipped rounds are excluded from points.</small></p>
 </body></html>
 """
 
@@ -2534,9 +2551,10 @@ def kombat_score_answers(args: dict, **kwargs) -> str:
     answers_b = args.get("answers_b") or {}
     if not isinstance(answers_a, dict) or not isinstance(answers_b, dict):
         return _err("answers_a and answers_b must be objects mapping task ID -> answer text.")
-    allow_exec = args.get("allow_code_execution")
-    if allow_exec is None:
-        allow_exec = bool(_cfg("allow_code_execution", False))
+    # Code execution is a USER setting only. It is deliberately absent from
+    # the tool schema: a model must not be able to switch on execution of its
+    # own Python through a tool call.
+    allow_exec = bool(_cfg("allow_code_execution", False))
     render = args.get("render_report", True)
     usage = args.get("usage") or {}
     if not isinstance(usage, dict):

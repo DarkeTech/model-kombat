@@ -158,6 +158,7 @@ def test_debug_exec_and_sudoku_and_rle():
 def test_weighted_scoring_and_ko():
     with tempfile.TemporaryDirectory() as td:
         tools.set_data_dir_override(Path(td))
+        tools.set_ctx(_ConfigCtx(allow_code_execution=True))
         try:
             out = json.loads(
                 tools.kombat_score_answers(
@@ -166,12 +167,12 @@ def test_weighted_scoring_and_ko():
                         "fighter_b": "sloppy-model",
                         "answers_a": {"T4": CROUTON_T4, "T5": CROUTON_T5, "T6": CROUTON_T6, "T7": GOOD_T7},
                         "answers_b": {"T4": "Stay amazing!", "T5": "A project was approved.", "T6": BAD_T6, "T7": BAD_T6},
-                        "allow_code_execution": True,
                         "render_report": False,
                     }
                 )
             )
         finally:
+            tools.set_ctx(None)
             tools.set_data_dir_override(None)
     assert out["ok"], out
     assert out["winner"] == "crouton-alpha", out["points"]
@@ -192,7 +193,6 @@ def test_errored_and_skipped_excluded():
                         "answers_a": {"T1": "a) $44.30, b) $5.70, c) $12.20", "T6": CROUTON_T6},
                         "answers_b": {"T1": "wrong", "T6": BAD_T6},
                         "errors_a": ["T6"],
-                        "allow_code_execution": True,
                         "render_report": False,
                     }
                 )
@@ -265,6 +265,17 @@ class _FakeCtx:
         return default
 
 
+class _ConfigCtx(_FakeCtx):
+    """A host whose plugin config carries explicit settings (the user's side)."""
+
+    def __init__(self, **cfg):
+        super().__init__()
+        self.cfg = cfg
+
+    def get_config(self, key, default=None):
+        return self.cfg.get(key, default)
+
+
 def test_run_fight_with_mock_host():
     tools.set_ctx(_FakeCtx())
     try:
@@ -335,6 +346,96 @@ def test_rematch_without_errors():
     assert out["ok"] is False and "no errored tasks" in out["error"]
 
 
+def test_tool_argument_cannot_enable_code_execution():
+    """Code execution is a user setting: a tool call must never switch it on."""
+    from schemas import KOMBAT_SCORE_ANSWERS
+
+    props = KOMBAT_SCORE_ANSWERS["parameters"]["properties"]
+    assert "allow_code_execution" not in props, props.keys()
+
+    with tempfile.TemporaryDirectory() as td:
+        tools.set_data_dir_override(Path(td))
+        tools.set_ctx(_ConfigCtx(allow_code_execution=False))
+        try:
+            out = json.loads(
+                tools.kombat_score_answers(
+                    {
+                        "fighter_a": "a",
+                        "fighter_b": "b",
+                        "answers_a": {"T6": CROUTON_T6},
+                        "answers_b": {"T6": BAD_T6},
+                        # exactly what a model would try:
+                        "allow_code_execution": True,
+                        "render_report": False,
+                    }
+                )
+            )
+        finally:
+            tools.set_ctx(None)
+            tools.set_data_dir_override(None)
+    assert out["ok"], out
+    # Nothing was executed, so the code round is skipped for both fighters and
+    # awards no points — the argument changed nothing.
+    assert out["points"] == {"a": 0.0, "b": 0.0}, out["points"]
+    task = out["rounds"][0]["tasks"][0]
+    assert task["a"]["skipped"] is True and task["b"]["skipped"] is True, task
+    assert out["rounds"][0]["name"].endswith("*"), out["rounds"][0]["name"]
+
+
+def test_spend_and_time_caps_only_lower():
+    tools.set_ctx(_ConfigCtx(max_fight_cost_usd=1.0, max_fight_tokens=1000,
+                             max_fight_seconds=60))
+    try:
+        # an argument may tighten ...
+        assert tools._cap("max_fight_cost_usd", 0.25, 2.0) == 0.25
+        assert tools._cap("max_fight_tokens", 500, 400000, cast=int) == 500
+        assert tools._cap("max_fight_seconds", 30, 360, zero_is_unlimited=True) == 30
+        # ... but never raise the configured cap
+        assert tools._cap("max_fight_cost_usd", 99.0, 2.0) == 1.0
+        assert tools._cap("max_fight_tokens", 10 ** 9, 400000, cast=int) == 1000
+        assert tools._cap("max_fight_seconds", 10 ** 6, 360, zero_is_unlimited=True) == 60
+        # 0 means "no wall cap" in the engine, so an argument of 0 must not
+        # strip the cap; a negative cost/token argument clamps to 0.
+        assert tools._cap("max_fight_seconds", 0, 360, zero_is_unlimited=True) == 60
+        assert tools._cap("max_fight_seconds", -5, 360, zero_is_unlimited=True) == 60
+        assert tools._cap("max_fight_cost_usd", -5, 2.0) == 0
+        # absent argument -> the configured cap
+        assert tools._cap("max_fight_cost_usd", None, 2.0) == 1.0
+    finally:
+        tools.set_ctx(None)
+    # no host ctx -> the documented defaults still apply
+    assert tools._cap("max_fight_cost_usd", 99.0, 2.0) == 2.0
+    assert tools._cap("max_fight_seconds", 0, 360, zero_is_unlimited=True) == 360
+
+
+def test_legacy_code_runner_is_sandboxed():
+    """T2/T6/T7/T8 go through the same hardened runner as code_exec."""
+    good = tools._execute_candidate(
+        tools._extract_code(CROUTON_T6, "def is_leap_year"), tools._HARNESSES["T6"]
+    )
+    assert good["passed"], good
+
+    for titre, code in [
+        ("socket import", "import socket\ndef is_leap_year(year):\n    return True\n"),
+        ("subprocess import", "import subprocess\ndef is_leap_year(year):\n    return True\n"),
+        ("ctypes import", "import ctypes\ndef is_leap_year(year):\n    return True\n"),
+    ]:
+        blocked = tools._execute_candidate(code, tools._HARNESSES["T6"])
+        assert not blocked["passed"], (titre, blocked)
+
+    leak = Path(tempfile.gettempdir()) / f"kombat-legacy-leak-{os.getpid()}.txt"
+    if leak.exists():
+        leak.unlink()
+    escape = (
+        "def is_leap_year(year):\n"
+        f"    open({str(leak)!r}, 'w').write('leak')\n"
+        "    return True\n"
+    )
+    out = tools._execute_candidate(escape, tools._HARNESSES["T6"])
+    assert not out["passed"], out
+    assert not leak.exists(), f"legacy runner leaked a write to {leak}"
+
+
 if __name__ == "__main__":
     test_data_dir_honors_hermes_home()
     test_list_tasks()
@@ -351,4 +452,7 @@ if __name__ == "__main__":
     test_run_fight_without_host_ctx()
     test_rematch_errors_merges()
     test_rematch_without_errors()
+    test_tool_argument_cannot_enable_code_execution()
+    test_spend_and_time_caps_only_lower()
+    test_legacy_code_runner_is_sandboxed()
     print("all Model Kombat tests passed")

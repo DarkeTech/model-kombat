@@ -44,9 +44,25 @@ exact checks, not by vibes.
    `kombat_rematch_errors` re-fights **only** the errored (task, fighter) pairs
    and merges the answers into the stored fight — then score again. Never
    re-run the whole fight just to fix a rate-limited round.
+   - Free-tier fighters (`:free`) rate-limit on a fair-share window that grows
+     while you retry: one rematch call usually recovers only a pair or two.
+     Sleep 2–7 min between calls and repeat until `still_failing` is empty —
+     hammering back-to-back just extends the backoff (observed resets at
+     ~30s, then ~380s).
+   - Every rematch call posts its own `REMATCH: …` parent (+ round) cards on
+     the kanban board. After the merged score, close the losers: archive the
+     extra REMATCH parents with a "superseded" comment and complete any round
+     cards left `ready` as "Not fought in this rematch bout."
+   - A fight card older than `stale_card_minutes` can be swept ("Stale —
+     closed by Model Kombat") while a later bout runs; if that happens, the
+     final REMATCH parent is the live scoreboard — attach the report and
+     complete it there.
 4. `kombat_score_answers` with both answer maps (pass `usage` + `errors_a/b`
    from the run). Code rounds only execute with `allow_code_execution=true`
-   (a user-visible setting) — otherwise they're excluded from points.
+   — a user-visible PLUGIN SETTING only; it is not a tool argument and the
+   model cannot switch it on. Otherwise those rounds are excluded from points.
+   Spend/wall-clock caps (`budget_usd`, `budget_tokens`, `max_fight_seconds`)
+   can be tightened by an argument but never raised past the setting.
    Weighted points, Championship K.O. rule, sudden death on a tie. The tool
    returns winner, points, KOs, usage totals, the HTML versus scorecard path,
    and appends the fight to history — share the report path.

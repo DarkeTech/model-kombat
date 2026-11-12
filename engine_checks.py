@@ -583,6 +583,7 @@ def _raises_ok(exc, name):
     return isinstance(expected, type) and isinstance(exc, expected)
 
 
+# --- harness body (case runner) ---------------------------------------------
 def _run(report):
     try:
         spec = json.load(open("spec.json", encoding="utf-8"))
@@ -666,6 +667,67 @@ def main():
 main()
 '''
 
+_HARNESS_SPLIT = "# --- harness body (case runner) ---"
+# Everything above the split is the hardening prelude: tempdir-only IO, an
+# empty environment, the import blocker and the audit hook. The legacy suite
+# harness below reuses it verbatim so T2/T6/T7/T8 get the same hardening as
+# code_exec instead of a bare subprocess.
+_HARNESS_PRELUDE = _HARNESS.split(_HARNESS_SPLIT)[0]
+
+_LEGACY_HARNESS = _HARNESS_PRELUDE + r'''
+import contextlib
+import io
+
+
+def _legacy_report():
+    report = {"passed": False, "output": "", "fatal": None}
+    try:
+        source = open("candidate.py", encoding="utf-8").read()
+        checks = open("checks.py", encoding="utf-8").read()
+    except Exception as exc:
+        report["fatal"] = "harness could not load inputs: %s" % (exc,)
+        return report
+
+    namespace = {"__name__": "candidate", "__builtins__": builtins}
+    try:
+        exec(compile(source, "candidate.py", "exec"), namespace)
+    except BaseException as exc:
+        report["fatal"] = "candidate failed to load: %s: %s" % (type(exc).__name__, exc)
+        return report
+
+    buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buffer):
+            exec(compile(checks, "checks.py", "exec"), namespace)
+    except SystemExit as exc:
+        report["output"] = buffer.getvalue()
+        report["fatal"] = "checks exited with %s" % (exc.code,)
+        return report
+    except BaseException as exc:
+        report["output"] = buffer.getvalue()
+        report["fatal"] = "checks raised %s: %s" % (type(exc).__name__, exc)
+        return report
+
+    report["output"] = buffer.getvalue()
+    report["passed"] = "ALL CHECKS PASSED" in report["output"]
+    return report
+
+
+def _legacy_main():
+    os.environ.clear()
+    sys.meta_path.insert(0, _BlockedImportFinder())
+    sys.addaudithook(_audit)
+    report = _legacy_report()
+    try:
+        with open(os.path.join(ROOT, RESULT), "w", encoding="utf-8") as fh:
+            json.dump(report, fh)
+    except BaseException:
+        pass
+
+
+_legacy_main()
+'''
+
 
 def _limit_resources() -> None:
     """preexec_fn: hard limits applied inside the child before exec."""
@@ -687,15 +749,20 @@ def _limit_resources() -> None:
             continue
 
 
-def _run_candidate(code: str, entrypoint: str, cases: list[dict], timeout_s: float) -> dict:
-    """Run candidate code in the hardened subprocess; return harness report."""
+def _run_sandboxed(code: str, harness_source: str, files: dict | None, timeout_s: float) -> dict:
+    """Run candidate code plus a harness in the hardened subprocess.
+
+    The single execution path for every scorer that runs model-written code:
+    an empty environment, ``python -I``, rlimits and the audit hook / import
+    blocker installed by the harness prelude.
+    """
     wall = max(1, min(int(round(timeout_s or EXEC_CPU_LIMIT_S)), EXEC_WALL_CAP_S))
     with tempfile.TemporaryDirectory(prefix="kombat-run-") as td:
         root = Path(td)
         (root / "candidate.py").write_text(code, encoding="utf-8")
-        (root / "harness.py").write_text(_HARNESS, encoding="utf-8")
-        (root / "spec.json").write_text(json.dumps({"entrypoint": entrypoint}), encoding="utf-8")
-        (root / "cases.json").write_text(json.dumps(cases), encoding="utf-8")
+        (root / "harness.py").write_text(harness_source, encoding="utf-8")
+        for name, text in (files or {}).items():
+            (root / name).write_text(text, encoding="utf-8")
         log_path = root / "output.log"
         timed_out = False
         try:
@@ -731,6 +798,45 @@ def _run_candidate(code: str, entrypoint: str, cases: list[dict], timeout_s: flo
             except (json.JSONDecodeError, OSError):
                 report = None
         return {"report": report, "timed_out": timed_out, "output": output, "wall_s": wall}
+
+
+def _run_candidate(code: str, entrypoint: str, cases: list[dict], timeout_s: float) -> dict:
+    """Run candidate code against the JSON case harness; return its report."""
+    return _run_sandboxed(
+        code,
+        _HARNESS,
+        {
+            "spec.json": json.dumps({"entrypoint": entrypoint}),
+            "cases.json": json.dumps(cases),
+        },
+        timeout_s,
+    )
+
+
+def run_legacy_harness(code: str, checks: str, timeout_s: float = 10) -> dict:
+    """Run a legacy-suite candidate (T2/T6/T7/T8) in the hardened runner.
+
+    ``checks`` is the legacy harness source, which prints its own FAIL lines
+    and ends with ``ALL CHECKS PASSED``. It runs inside the same sandbox as
+    code_exec — empty env, ``python -I``, rlimits, audit hook, import blocker —
+    so no task in the suite has a softer execution path.
+
+    Returns ``{"passed": bool, "details": [str, ...]}``.
+    """
+    raw = _run_sandboxed(code, _LEGACY_HARNESS, {"checks.py": checks}, timeout_s)
+    if raw.get("internal_error"):
+        return {"passed": False, "details": ["runner error: %s" % (raw["internal_error"],)]}
+    report = raw.get("report") or {}
+    if raw.get("timed_out"):
+        return {"passed": False, "details": ["timeout after %ss" % (raw.get("wall_s"),)]}
+    lines = [ln for ln in str(report.get("output") or "").splitlines() if ln.strip()]
+    if report.get("fatal"):
+        # The harness's own FAIL line is more useful than the exit code.
+        return {"passed": False, "details": lines[-3:] if lines else [str(report["fatal"])]}
+    return {
+        "passed": bool(report.get("passed")),
+        "details": lines[-3:] if lines else ["no output"],
+    }
 
 
 def _check_code_exec(check: dict, answer: str, allow_exec: bool) -> dict:
@@ -787,6 +893,11 @@ def _check_code_exec(check: dict, answer: str, allow_exec: bool) -> dict:
 
 _SQL_FENCE_RE = re.compile(r"```sql[ \t]*\r?\n(.*?)```", re.S | re.I)
 _SQL_ALLOWED = {"SELECT", "WITH"}
+# setup snippets come from task specs, and .kombat/tasks.json is whatever repo
+# you opened — untrusted input. ATTACH/DETACH would let a snippet mount any
+# file on the host as a database, so they are refused outright.
+_SQL_SETUP_FORBIDDEN = re.compile(r"\b(?:ATTACH|DETACH)\b", re.I)
+_SQL_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 
 
 def _extract_sql(answer: str) -> str | None:
@@ -873,6 +984,12 @@ def _check_sql_exec(check: dict, answer: str) -> dict:
     keyword = (match.group(1) if match else "").upper()
     if keyword not in _SQL_ALLOWED:
         return _scored(0.0, f"sql_exec: rejected statement type {keyword or '?'} — only SELECT/WITH allowed")
+
+    for snippet in setup:
+        if _SQL_SETUP_FORBIDDEN.search(_SQL_COMMENT_RE.sub(" ", snippet)):
+            return _errored(
+                "sql_exec: setup may not ATTACH/DETACH — setup runs against an in-memory database only"
+            )
 
     conn = sqlite3.connect(":memory:")
     try:

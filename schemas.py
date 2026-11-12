@@ -110,10 +110,10 @@ KOMBAT_RUN_FIGHT = {
             },
             "temperature": {"type": "number", "description": "Sampling temperature for both fighters. Default 0 for fairness."},
             "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default 2000."},
-            "budget_usd": {"type": "number", "description": "Stop the fight once cumulative estimated cost exceeds this. Default 2.0."},
-            "budget_tokens": {"type": "integer", "description": "Stop the fight once cumulative input+output tokens exceed this (works even when prices are unknown). Default 400000."},
+            "budget_usd": {"type": "number", "description": "Lower the spend cap for this fight (never above the configured max_fight_cost_usd). Default: the configured cap."},
+            "budget_tokens": {"type": "integer", "description": "Lower the token cap for this fight (never above the configured max_fight_tokens). Default: the configured cap."},
             "timeout_s": {"type": "number", "description": "Hard per-call deadline in seconds (worker thread abandoned at the deadline). Default from settings (llm_timeout_s, 180)."},
-            "max_fight_seconds": {"type": "number", "description": "Whole-fight wall-clock cap in seconds (default from settings, 360). Remaining pairs are marked skipped with 'fight time cap' and the fight returns time_cap_hit: true."},
+            "max_fight_seconds": {"type": "number", "description": "Lower the whole-fight wall-clock cap for this fight (never above the configured max_fight_seconds). Remaining pairs are marked skipped with 'fight time cap' and the fight returns time_cap_hit: true."},
             "max_rate_wait_s": {"type": "number", "description": "Longest single 429 wait in seconds (default from settings, 120)."},
             "rate_wait_budget_s": {"type": "number", "description": "Total 429 wait budget for the whole fight in seconds. Default 240."},
             "auto_rematch": {"type": "boolean", "description": "Retry errored (task, fighter) pairs inside this fight. Default from settings (true)."},
@@ -155,7 +155,8 @@ KOMBAT_SCORE_ANSWERS = {
     "description": (
         "Score a fight deterministically and render the versus scorecard. Scores each task "
         "mechanically (numeric matches, synonym-aware phrase matches, word/sentence counts, "
-        "preserved-token checks, and — only with allow_code_execution=true — executing "
+        "preserved-token checks, and — only when code execution is enabled in the plugin "
+        "settings (allow_code_execution), which this tool cannot switch on — executing "
         "model-written code against reference checks). Points are weighted by round "
         "(Warm-up 1, Main Event 2, Championship 3); ties after the Championship go to "
         "sudden death; passing every Championship task while the opponent fails one is a "
@@ -200,10 +201,6 @@ KOMBAT_SCORE_ANSWERS = {
                 "type": "object",
                 "description": "Optional per-fighter usage totals from the run tool ({fighter: {latency_s, tokens, cost_usd}}), shown on the scorecard.",
             },
-            "allow_code_execution": {
-                "type": "boolean",
-                "description": "Execute code-task answers in a subprocess (timeout, not a security sandbox). Default from settings (false).",
-            },
             "render_report": {"type": "boolean", "description": "Write the HTML versus scorecard. Default true."},
             "last": {
                 "type": "boolean",
@@ -228,7 +225,7 @@ KOMBAT_REMATCH_ERRORS = {
         "properties": {
             "temperature": {"type": "number", "description": "Sampling temperature for rematch calls. Default from settings (0)."},
             "max_tokens": {"type": "integer", "description": "Max completion tokens per answer. Default from settings."},
-            "budget_usd": {"type": "number", "description": "Stop rematching once cumulative cost exceeds this. Default from settings."},
+            "budget_usd": {"type": "number", "description": "Lower the spend cap for this rematch (never above the configured max_fight_cost_usd). Default from settings."},
             "timeout_s": {"type": "number", "description": "Per-call timeout in seconds. Default from settings."},
         },
         "required": [],

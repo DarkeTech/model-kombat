@@ -208,10 +208,7 @@ def _handle_kombat(ctx, raw_args: str) -> str:
         return "No fight started yet in this session."
 
     if sub == "score":
-        return tools.kombat_score_answers({
-            "last": True,
-            "allow_code_execution": bool(tools._cfg("allow_code_execution", False)),
-        })
+        return tools.kombat_score_answers({"last": True})
 
     if sub == "history":
         return tools.kombat_history({"limit": 10})

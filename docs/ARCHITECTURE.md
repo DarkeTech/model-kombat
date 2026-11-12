@@ -70,7 +70,8 @@ fight flows from a kanban card to a badge on that card.
 
 `engine_checks.py` is the scoring kernel called by `tools.py` for every task:
 `score_check(check, answer, allow_exec) -> {score, status, detail}` for the eight
-check types, plus the subprocess runner used only by `code_exec`.
+check types, plus `_run_sandboxed` — the single hardened runner behind both the
+`code_exec` checks and the legacy T2/T6/T7/T8 harnesses.
 `schemas.py` holds the tool JSON schemas the model sees; it has no runtime state.
 
 ## Data files (plugin data dir)

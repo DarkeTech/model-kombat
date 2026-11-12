@@ -714,8 +714,9 @@ def render_report(
         + "".join(sections)
         + _usage_table(usage or {})
         + "<footer>Scored mechanically by Model Kombat. Code rounds execute only "
-          "with allow_code_execution=true (subprocess, timeout, not a security "
-          "sandbox). Errored/skipped rounds are excluded from points."
+          "when the allow_code_execution PLUGIN SETTING is on (subprocess, "
+          "timeout, not a security sandbox) — a tool argument cannot switch it on. "
+          "Errored/skipped rounds are excluded from points."
           f"{incomplete_note}</footer>"
     )
     return _page(f"Model Kombat — {fighter_a} vs {fighter_b}", body)
