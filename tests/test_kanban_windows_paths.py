@@ -119,6 +119,9 @@ def test_cli_path_normalises_windows_paths():
     # Already-posix and Path objects are passed through unchanged.
     assert kanban._cli_path(POSIX_PATH) == POSIX_PATH
     assert kanban._cli_path(Path(WIN_PATH)) == POSIX_PATH
+    # A UNC prefix keeps both leading separators; only the inner ones collapse.
+    unc = BS * 2 + BS.join(["server", "share", "r.html"])
+    assert kanban._cli_path(unc) == "//server/share/r.html"
 
 
 def test_raw_windows_path_metadata_is_rejected_by_the_shell_layer():

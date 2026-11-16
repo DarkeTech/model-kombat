@@ -93,8 +93,19 @@ def _cli_path(path) -> str:
     POSIX separators carry no escaping hazard and are accepted by every
     consumer (argparse, the kanban CLI, Windows file APIs), so paths are
     normalised here rather than shell-quoted harder.
+
+    ``Path.as_posix`` only rewrites separators when the path object is a
+    ``WindowsPath``, i.e. when the code is *running* on Windows. Kanban calls
+    that carry a Windows path can also be composed on POSIX (a bout whose
+    report lives on a mounted share, or a test modelling the host shell), so
+    backslashes are translated explicitly here instead of relying on the
+    flavour of the running interpreter.
     """
-    return Path(str(path)).as_posix()
+    text = str(path)
+    if "\\" in text:
+        # Doubled separators first, so a UNC prefix keeps its two slashes.
+        text = text.replace("\\\\", "//").replace("\\", "/")
+    return Path(text).as_posix()
 
 
 def _extract_json(text: str):
