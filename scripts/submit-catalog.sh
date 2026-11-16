@@ -4,6 +4,12 @@
 #   scripts/submit-catalog.sh            # preview: shows the entry that would be committed
 #   scripts/submit-catalog.sh --push     # fork, branch, commit, push, open the PR
 #
+# The branch is versioned (catalog/<name>-<version>) because the fork keeps the
+# branch from a previous submission: reusing a fixed name makes git reject the
+# push as non-fast-forward. PR_TITLE overrides the PR title for a SHA bump
+# ("plugin-catalog: bump <name> to <version>", rule 4 upstream); the default
+# title is the initial-listing form.
+#
 # Pins plugin-catalog/model-kombat.yaml to the current HEAD SHA, substituting the
 # 40-zero placeholders in catalog/model-kombat.yaml (sha + every image URL) so the
 # catalog entry and the pinned README/docs assets always match the same commit.
@@ -74,16 +80,18 @@ gh repo fork "$UPSTREAM" --clone=false --remote=false 2>/dev/null || true
 WORK="$(winpath "$(mktemp -d)")"
 gh repo clone "$OWNER/hermes-agent" "$WORK" -- --depth 1
 cd "$WORK"
-git checkout -b "catalog/model-kombat"
+BRANCH="catalog/$NAME-$PLUGIN_VERSION"
+TITLE="${PR_TITLE:-feat(plugin-catalog): add $NAME plugin}"
+git checkout -b "$BRANCH"
 mkdir -p plugin-catalog
 cp "$TMP/model-kombat.yaml" plugin-catalog/model-kombat.yaml
 git add plugin-catalog/model-kombat.yaml
 git -c user.name="$OWNER" -c user.email="vh@darketechnology.com" \
-  commit -m "feat(plugin-catalog): add model-kombat plugin"
-git push -u origin catalog/model-kombat
+  commit -m "$TITLE"
+git push -u origin "$BRANCH"
 gh pr create --repo "$UPSTREAM" \
-  --head "$OWNER:catalog/model-kombat" \
-  --title "feat(plugin-catalog): add model-kombat plugin" \
+  --head "$OWNER:$BRANCH" \
+  --title "$TITLE" \
   --body "$(cat <<EOF
 ## Model Kombat — head-to-head model evaluation
 
